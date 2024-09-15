@@ -701,7 +701,10 @@ func (pokemon *Pokemon) setUnknownTimestamp() {
 func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails, proto *pogo.PokemonProto, username string) {
 	pokemon.Username = null.StringFrom(username)
 	pokemon.Shiny = null.BoolFrom(proto.PokemonDisplay.Shiny)
-	pokemon.Cp = null.IntFrom(int64(proto.Cp))
+	shouldTrustIv := proto.IndividualAttack > 10 || proto.IndividualDefense > 10 || proto.IndividualStamina > 10
+	if shouldTrustIv {
+		pokemon.Cp = null.IntFrom(int64(proto.Cp))
+	}
 	pokemon.Move1 = null.IntFrom(int64(proto.Move1))
 	pokemon.Move2 = null.IntFrom(int64(proto.Move2))
 	pokemon.Height = null.FloatFrom(float64(proto.HeightM))
@@ -770,15 +773,19 @@ func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails
 				}
 			}
 			pokemon.Level = null.IntFrom(level - 5)
-			pokemon.IvInactive = null.IntFrom(int64(
-				proto.IndividualAttack | proto.IndividualDefense<<4 | proto.IndividualStamina<<8))
+			if shouldTrustIv {
+				pokemon.IvInactive = null.IntFrom(int64(
+					proto.IndividualAttack | proto.IndividualDefense<<4 | proto.IndividualStamina<<8))
+			}
 		} else {
 			if archive {
 				pokemon.IvInactive = pokemon.compressIv()
 			}
 			pokemon.Level = null.IntFrom(level)
-			pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
-				int64(proto.IndividualStamina))
+			if shouldTrustIv {
+				pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
+					int64(proto.IndividualStamina))
+			}
 		}
 	}
 	if pokemon.IsDitto {
@@ -786,8 +793,10 @@ func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails
 		// when disguise is boosted, it has same IV as Ditto
 		if isUnboostedPartlyCloudy {
 			if pokemon.Level.Int64 == level-5 {
-				pokemon.IvInactive = null.IntFrom(int64(
-					proto.IndividualAttack | proto.IndividualDefense<<4 | proto.IndividualStamina<<8))
+				if shouldTrustIv {
+					pokemon.IvInactive = null.IntFrom(int64(
+						proto.IndividualAttack | proto.IndividualDefense<<4 | proto.IndividualStamina<<8))
+				}
 			} else {
 				setDittoAttributes("0N", false, true, false)
 			}
@@ -796,15 +805,19 @@ func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails
 			oldWeather != uint8(pogo.GameplayWeatherProto_PARTLY_CLOUDY) &&
 			// at this point we are not sure if we are in 00 or 0P, so we guess 0P only if the last scanned level agrees
 			pokemon.Level.Int64 == level-5 {
-			pokemon.IvInactive = null.IntFrom(int64(
-				proto.IndividualAttack | proto.IndividualDefense<<4 | proto.IndividualStamina<<8))
+			if shouldTrustIv {
+				pokemon.IvInactive = null.IntFrom(int64(
+					proto.IndividualAttack | proto.IndividualDefense<<4 | proto.IndividualStamina<<8))
+			}
 		} else if pokemon.Weather.Int64 != int64(pogo.GameplayWeatherProto_NONE) &&
 			pokemon.Weather.Int64 != int64(pogo.GameplayWeatherProto_PARTLY_CLOUDY) && pokemon.Level.Int64 != level {
 			setDittoAttributes("BN", false, true, false)
 		} else {
 			pokemon.Level = null.IntFrom(level)
-			pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
-				int64(proto.IndividualStamina))
+			if shouldTrustIv {
+				pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
+					int64(proto.IndividualStamina))
+			}
 		}
 		return
 	}
@@ -877,8 +890,8 @@ func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails
 				case EncounterWeather_Invalid: // should only happen when upgrading with pre-existing data
 					if !pokemon.IvInactive.Valid {
 						setDittoAttributes("BN/PP/PN>B0", false, true, true)
-					} else if level <= 5 ||
-						proto.IndividualAttack < 4 || proto.IndividualDefense < 4 || proto.IndividualStamina < 4 {
+					} else if level <= 5 || shouldTrustIv &&
+						(proto.IndividualAttack < 4 || proto.IndividualDefense < 4 || proto.IndividualStamina < 4) {
 						setDittoAttributes("00/0N/BN/PP/PN>B0", false, true, true)
 					} else {
 						setDittoAttributes("00/0N/BN/PP/PN>B0 or 0P>[BN]", false, true, false)
@@ -886,8 +899,8 @@ func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails
 				case uint8(pogo.GameplayWeatherProto_NONE), EncounterWeather_UnboostedNotPartlyCloudy,
 					uint8(pogo.GameplayWeatherProto_NONE) | EncounterWeather_Rerolled,
 					EncounterWeather_UnboostedNotPartlyCloudy | EncounterWeather_Rerolled:
-					if level <= 5 ||
-						proto.IndividualAttack < 4 || proto.IndividualDefense < 4 || proto.IndividualStamina < 4 {
+					if level <= 5 || shouldTrustIv &&
+						(proto.IndividualAttack < 4 || proto.IndividualDefense < 4 || proto.IndividualStamina < 4) {
 						setDittoAttributes("00/0N>B0", false, true, true)
 					} else if oldWeather != uint8(pogo.GameplayWeatherProto_NONE)|EncounterWeather_Rerolled {
 						setDittoAttributes("00/0N>[B0] or 0P>BN", false, true, true)
@@ -919,19 +932,23 @@ func (pokemon *Pokemon) addEncounterPokemon(ctx context.Context, db db.DbDetails
 		}
 	}
 	if pokemon.Weather.Int64 != int64(pogo.GameplayWeatherProto_NONE) {
-		if level <= 5 || proto.IndividualAttack < 4 || proto.IndividualDefense < 4 || proto.IndividualStamina < 4 {
+		if level <= 5 || shouldTrustIv && (proto.IndividualAttack < 4 || proto.IndividualDefense < 4 || proto.IndividualStamina < 4) {
 			setDittoAttributes("B0", false, false, true)
 		} else {
 			pokemon.Level = null.IntFrom(level)
-			pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
-				int64(proto.IndividualStamina))
+			if shouldTrustIv {
+				pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
+					int64(proto.IndividualStamina))
+			}
 		}
 	} else if level > 30 {
 		setDittoAttributes("0P", true, false, true)
 	} else {
 		pokemon.Level = null.IntFrom(level)
-		pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
-			int64(proto.IndividualStamina))
+		if shouldTrustIv {
+			pokemon.calculateIv(int64(proto.IndividualAttack), int64(proto.IndividualDefense),
+				int64(proto.IndividualStamina))
+		}
 	}
 }
 
