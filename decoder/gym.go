@@ -624,6 +624,10 @@ func createGymWebhooks(oldGym *Gym, gym *Gym, areas []geo.AreaName) {
 func saveGymRecord(ctx context.Context, db db.DbDetails, gym *Gym) {
 	oldGym, _ := GetGymRecord(ctx, db, gym.Id)
 
+	if oldGym != nil && oldGym.TeamId.ValueOrZero() != gym.TeamId.ValueOrZero() {
+		gym.Defenders = null.NewString("", false)
+	}
+
 	now := time.Now().Unix()
 	if oldGym != nil && !hasChangesGym(oldGym, gym) {
 		if oldGym.Updated > now-900 {
