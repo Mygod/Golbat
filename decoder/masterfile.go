@@ -30,6 +30,8 @@ var (
 	errMasterFileSave       = errors.New("can't save MasterFile")
 )
 
+var boostedWeatherLookup = [...]uint8{0, 8, 16, 32, 16, 2, 8, 4, 128, 64, 2, 4, 2, 4, 32, 64, 32, 128, 16}
+
 type MasterFileData struct {
 	Initialized bool                      `json:"-"`
 	Pokemon     map[int]MasterFilePokemon `json:"pokemon"`
@@ -61,19 +63,27 @@ type rawMasterFilePokemonForm struct {
 	Types []int `json:"types"`
 }
 
-var (
-	watcherChan    chan bool
-	masterFileMu   sync.RWMutex
-	masterFileRaw  []byte
-	masterFileData MasterFileData
-)
+type masterFileStore struct {
+	mu sync.RWMutex
+
+	raw  []byte
+	data MasterFileData
+
+	watcherChan chan bool
+}
+
+var masterFiles = &masterFileStore{}
 
 func EnsureMasterFileData() error {
-	if err := FetchMasterFileData(); err != nil {
+	return masterFiles.Ensure()
+}
+
+func (s *masterFileStore) Ensure() error {
+	if err := s.Fetch(); err != nil {
 		log.Warnf("MasterFile fetch failed: %v", err)
-		if err2 := LoadMasterFileData(""); err2 != nil {
+		if err2 := s.Load(""); err2 != nil {
 			log.Warnf("Loading MasterFile from cache failed: %v", err2)
-			if err3 := LoadMasterFileData("pogo/master-latest-basics.json"); err3 != nil {
+			if err3 := s.Load("pogo/master-latest-basics.json"); err3 != nil {
 				return fmt.Errorf("masterfile unavailable (fetch: %w, cache: %v, fallback: %v)", err, err2, err3)
 			}
 			log.Warnf("Loaded MasterFile from bundled fallback")
@@ -82,7 +92,7 @@ func EnsureMasterFileData() error {
 		}
 	} else {
 		log.Infof("MasterFile fetched successfully")
-		if err := SaveMasterFileData(); err != nil {
+		if err := s.Save(); err != nil {
 			log.Warnf("Storing MasterFile cache under %s has failed: %v", masterFileCachePath, err)
 		}
 	}
@@ -91,15 +101,25 @@ func EnsureMasterFileData() error {
 
 // FetchMasterFileData downloads and loads the remote masterfile.
 func FetchMasterFileData() error {
+	return masterFiles.Fetch()
+}
+
+// Fetch downloads and loads the remote masterfile.
+func (s *masterFileStore) Fetch() error {
 	data, err := downloadMasterFile()
 	if err != nil {
 		return err
 	}
-	return loadMasterFileBytes(data)
+	return s.loadMasterFileBytes(data)
 }
 
 // LoadMasterFileData loads the masterfile from disk.
 func LoadMasterFileData(filePath string) error {
+	return masterFiles.Load(filePath)
+}
+
+// Load loads the masterfile from disk.
+func (s *masterFileStore) Load(filePath string) error {
 	if filePath == "" {
 		filePath = masterFileCachePath
 	}
@@ -107,19 +127,24 @@ func LoadMasterFileData(filePath string) error {
 	if err != nil {
 		return errMasterFileOpen
 	}
-	return loadMasterFileBytes(data)
+	return s.loadMasterFileBytes(data)
 }
 
 // SaveMasterFileData writes the raw masterfile to cache.
 func SaveMasterFileData() error {
-	masterFileMu.RLock()
-	if len(masterFileRaw) == 0 {
-		masterFileMu.RUnlock()
+	return masterFiles.Save()
+}
+
+// Save writes the raw masterfile to cache.
+func (s *masterFileStore) Save() error {
+	s.mu.RLock()
+	if len(s.raw) == 0 {
+		s.mu.RUnlock()
 		return errMasterFileMarshall
 	}
-	raw := make([]byte, len(masterFileRaw))
-	copy(raw, masterFileRaw)
-	masterFileMu.RUnlock()
+	raw := make([]byte, len(s.raw))
+	copy(raw, s.raw)
+	s.mu.RUnlock()
 
 	if err := os.WriteFile(masterFileCachePath, raw, 0644); err != nil {
 		return errMasterFileSave
@@ -128,12 +153,19 @@ func SaveMasterFileData() error {
 }
 
 func WatchMasterFileData() error {
-	if watcherChan != nil {
+	return masterFiles.Watch()
+}
+
+func (s *masterFileStore) Watch() error {
+	s.mu.Lock()
+	if s.watcherChan != nil {
+		s.mu.Unlock()
 		return errors.New("MasterFile watcher is already running")
 	}
-
+	watcherChan := make(chan bool)
+	s.watcherChan = watcherChan
+	s.mu.Unlock()
 	log.Infof("MasterFile watcher started")
-	watcherChan = make(chan bool)
 	interval := 60 * time.Minute
 
 	go func() {
@@ -152,17 +184,17 @@ func WatchMasterFileData() error {
 					log.Infof("Remote MasterFile fetch failed: %v", err)
 					continue
 				}
-				masterFileMu.RLock()
-				same := bytes.Equal(masterFileRaw, data)
-				masterFileMu.RUnlock()
+				s.mu.RLock()
+				same := bytes.Equal(s.raw, data)
+				s.mu.RUnlock()
 				if same {
 					continue
 				}
-				if err := loadMasterFileBytes(data); err != nil {
+				if err := s.loadMasterFileBytes(data); err != nil {
 					log.Warnf("Unable to parse new MasterFile: %v", err)
 					continue
 				}
-				if err := SaveMasterFileData(); err != nil {
+				if err := s.Save(); err != nil {
 					log.Warnf("Storing MasterFile cache under %s has failed: %v", masterFileCachePath, err)
 				} else {
 					log.Infof("MasterFile cache saved to %s", masterFileCachePath)
@@ -172,6 +204,34 @@ func WatchMasterFileData() error {
 		}
 	}()
 	return nil
+}
+
+func (s *masterFileStore) Initialized() bool {
+	s.mu.RLock()
+	initialized := s.data.Initialized
+	s.mu.RUnlock()
+	return initialized
+}
+
+func (s *masterFileStore) Snapshot() MasterFileData {
+	s.mu.RLock()
+	data := s.data
+	s.mu.RUnlock()
+	return data
+}
+
+func (s *masterFileStore) Pokemon(pokemonID int16) (MasterFilePokemon, bool) {
+	data := s.Snapshot()
+	pokemon, ok := data.Pokemon[int(pokemonID)]
+	if !ok {
+		log.Warnf("MasterFile: Unknown PokemonId %d", pokemonID)
+		return MasterFilePokemon{}, false
+	}
+	return pokemon, true
+}
+
+func (s *masterFileStore) BoostedWeathers(pokemonID, form int16) (result uint8) {
+	return boostedWeathersFromData(s.Snapshot(), pokemonID, form)
 }
 
 func downloadMasterFile() ([]byte, error) {
@@ -197,7 +257,7 @@ func downloadMasterFile() ([]byte, error) {
 	return body, nil
 }
 
-func loadMasterFileBytes(data []byte) error {
+func (s *masterFileStore) loadMasterFileBytes(data []byte) error {
 	var raw rawMasterFile
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return errMasterFileUnmarshall
@@ -238,18 +298,34 @@ func loadMasterFileBytes(data []byte) error {
 
 	parsed.Initialized = true
 
-	masterFileMu.Lock()
-	masterFileData = parsed
+	s.mu.Lock()
+	s.data = parsed
 
-	masterFileRaw = make([]byte, len(data))
-	copy(masterFileRaw, data)
-	masterFileMu.Unlock()
+	s.raw = make([]byte, len(data))
+	copy(s.raw, data)
+	s.mu.Unlock()
 	return nil
 }
 
-func getMasterFileData() MasterFileData {
-	masterFileMu.RLock()
-	data := masterFileData
-	masterFileMu.RUnlock()
-	return data
+func boostedWeathersFromData(data MasterFileData, pokemonID, form int16) (result uint8) {
+	pokemon, ok := data.Pokemon[int(pokemonID)]
+	if !ok {
+		log.Warnf("Unknown PokemonId %d", pokemonID)
+		return
+	}
+	if form > 0 {
+		formData, ok := pokemon.Forms[int(form)]
+		if !ok {
+			log.Warnf("Unknown Form %d for PokemonId %d", form, pokemonID)
+		} else if formData.Types != nil {
+			for _, t := range formData.Types {
+				result |= boostedWeatherLookup[t]
+			}
+			return
+		}
+	}
+	for _, t := range pokemon.Types {
+		result |= boostedWeatherLookup[t]
+	}
+	return
 }

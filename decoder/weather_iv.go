@@ -16,34 +16,8 @@ type WeatherUpdate struct {
 	NewWeather int32
 }
 
-var boostedWeatherLookup = []uint8{0, 8, 16, 32, 16, 2, 8, 4, 128, 64, 2, 4, 2, 4, 32, 64, 32, 128, 16}
-
-func findBoostedWeathers(data MasterFileData, pokemonId, form int16) (result uint8) {
-	pokemon, ok := data.Pokemon[int(pokemonId)]
-	if !ok {
-		log.Warnf("Unknown PokemonId %d", pokemonId)
-		return
-	}
-	if form > 0 {
-		formData, ok := pokemon.Forms[int(form)]
-		if !ok {
-			log.Warnf("Unknown Form %d for PokemonId %d", form, pokemonId)
-		} else if formData.Types != nil {
-			for _, t := range formData.Types {
-				result |= boostedWeatherLookup[t]
-			}
-			return
-		}
-	}
-	for _, t := range pokemon.Types {
-		result |= boostedWeatherLookup[t]
-	}
-	return
-}
-
 func ProactiveIVSwitch(ctx context.Context, db db.DbDetails, weatherUpdate WeatherUpdate, toDB bool, timestamp int64) {
-	data := getMasterFileData()
-	if !data.Initialized {
+	if !masterFiles.Initialized() {
 		return
 	}
 	weatherCell := s2.CellFromCellID(s2.CellID(weatherUpdate.S2CellId))
@@ -72,7 +46,7 @@ func ProactiveIVSwitch(ctx context.Context, db db.DbDetails, weatherUpdate Weath
 		if !found || !pokemonLookup.PokemonLookup.HasEncounterValues {
 			return true
 		}
-		boostedWeathers := findBoostedWeathers(data, pokemonLookup.PokemonLookup.PokemonId, pokemonLookup.PokemonLookup.Form)
+		boostedWeathers := masterFiles.BoostedWeathers(pokemonLookup.PokemonLookup.PokemonId, pokemonLookup.PokemonLookup.Form)
 		if boostedWeathers == 0 {
 			return true
 		}
