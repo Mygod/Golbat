@@ -39,13 +39,15 @@ type MasterFileData struct {
 }
 
 type MasterFilePokemon struct {
-	Name  string                 `json:"name"`
-	Types []int                  `json:"types"`
-	Forms map[int]MasterFileForm `json:"forms"`
+	Name           string                 `json:"name"`
+	Types          []int                  `json:"types"`
+	Forms          map[int]MasterFileForm `json:"forms"`
+	BoostedWeather uint8                  `json:"-"`
 }
 
 type MasterFileForm struct {
-	Types []int `json:"types"`
+	Types          []int `json:"types"`
+	BoostedWeather uint8 `json:"-"`
 }
 
 type rawMasterFile struct {
@@ -231,7 +233,22 @@ func (s *masterFileStore) Pokemon(pokemonID int16) (MasterFilePokemon, bool) {
 }
 
 func (s *masterFileStore) BoostedWeathers(pokemonID, form int16) (result uint8) {
-	return boostedWeathersFromData(s.Snapshot(), pokemonID, form)
+	s.mu.RLock()
+	pokemon, ok := s.data.Pokemon[int(pokemonID)]
+	s.mu.RUnlock()
+	if !ok {
+		log.Warnf("Unknown PokemonId %d", pokemonID)
+		return 0
+	}
+	if form > 0 {
+		formData, ok := pokemon.Forms[int(form)]
+		if !ok {
+			log.Warnf("Unknown Form %d for PokemonId %d", form, pokemonID)
+		} else if formData.Types != nil {
+			return formData.BoostedWeather
+		}
+	}
+	return pokemon.BoostedWeather
 }
 
 func downloadMasterFile() ([]byte, error) {
@@ -280,13 +297,15 @@ func (s *masterFileStore) loadMasterFileBytes(data []byte) error {
 				continue
 			}
 			forms[intFid] = MasterFileForm{
-				Types: append([]int(nil), form.Types...),
+				Types:          append([]int(nil), form.Types...),
+				BoostedWeather: weatherMaskFromTypes(form.Types),
 			}
 		}
 		parsed.Pokemon[intPid] = MasterFilePokemon{
-			Name:  pokemon.Name,
-			Types: append([]int(nil), pokemon.Types...),
-			Forms: forms,
+			Name:           pokemon.Name,
+			Types:          append([]int(nil), pokemon.Types...),
+			Forms:          forms,
+			BoostedWeather: weatherMaskFromTypes(pokemon.Types),
 		}
 	}
 
@@ -307,24 +326,8 @@ func (s *masterFileStore) loadMasterFileBytes(data []byte) error {
 	return nil
 }
 
-func boostedWeathersFromData(data MasterFileData, pokemonID, form int16) (result uint8) {
-	pokemon, ok := data.Pokemon[int(pokemonID)]
-	if !ok {
-		log.Warnf("Unknown PokemonId %d", pokemonID)
-		return
-	}
-	if form > 0 {
-		formData, ok := pokemon.Forms[int(form)]
-		if !ok {
-			log.Warnf("Unknown Form %d for PokemonId %d", form, pokemonID)
-		} else if formData.Types != nil {
-			for _, t := range formData.Types {
-				result |= boostedWeatherLookup[t]
-			}
-			return
-		}
-	}
-	for _, t := range pokemon.Types {
+func weatherMaskFromTypes(types []int) (result uint8) {
+	for _, t := range types {
 		result |= boostedWeatherLookup[t]
 	}
 	return
