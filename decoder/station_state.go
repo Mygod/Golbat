@@ -204,7 +204,7 @@ func saveStationRecordWithFreshness(ctx context.Context, db db.DbDetails, statio
 
 		// Skip save if not dirty and was updated recently (15-min debounce)
 		if !stationNeedsWrite {
-			if station.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
+			if !freshness.IsServer() || station.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
 				stationNeedsWrite = false
 			} else {
 				stationNeedsWrite = true
@@ -217,7 +217,7 @@ func saveStationRecordWithFreshness(ctx context.Context, db db.DbDetails, statio
 	}
 
 	if stationNeedsWrite {
-		station.SetUpdatedMs(nowMs)
+		station.SetUpdatedMs(freshness.TimestampMs())
 
 		// Debug logging before queueing
 		if dbDebugEnabled {

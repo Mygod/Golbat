@@ -323,13 +323,16 @@ func savePokestopRecordWithFreshness(ctx context.Context, db db.DbDetails, pokes
 	}
 	nowMs := freshness.TimestampMs()
 	if !pokestop.IsNewRecord() && !pokestop.IsDirty() && !pokestop.IsInternalDirty() {
+		if !freshness.IsServer() {
+			return false
+		}
 		// default debounce is 15 minutes (900s). If reduce_updates is enabled, use 12 hours.
 		if pokestop.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
 			// if a pokestop is unchanged and was seen recently, skip saving
 			return false
 		}
 	}
-	pokestop.SetUpdatedMs(nowMs)
+	pokestop.SetUpdatedMs(freshness.TimestampMs())
 
 	// Capture isNewRecord before state changes
 	isNewRecord := pokestop.IsNewRecord()

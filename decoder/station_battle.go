@@ -50,6 +50,18 @@ type stationBattleWrite struct {
 	Battles   []StationBattleData
 }
 
+// stationBattleState intentionally tracks only retained active battle rows plus
+// whether the cache has been loaded. An empty loaded state is not an
+// authoritative "server observed no battles at timestamp T" watermark.
+//
+// GMO station updates can arrive out of order and can carry different battle
+// subsets. Keeping a negative freshness watermark for empty observations would
+// suppress older-but-still-future battle rows that would have survived if the
+// same observations were processed in server order, especially after local
+// expiry pruning or DB hydration leaves no active rows. A stale replay can
+// therefore temporarily reintroduce a battle after a newer no-battle
+// observation, but the row remains bounded by battle_end and the next station
+// GMO observation converges the cache again.
 type stationBattleState struct {
 	Battles []StationBattleData
 	Loaded  bool
@@ -309,7 +321,7 @@ func upsertCachedStationBattle(battle StationBattleData, now int64) bool {
 
 func upsertCachedStationBattleWithFreshness(battle StationBattleData, now int64, freshness Freshness) bool {
 	state, _ := stationBattleCache.Load(battle.StationId)
-	next := mergeStationBattles(state.Battles, battle, now, freshness)
+	next := mergeStationBattles(state, battle, now, freshness)
 	if state.Loaded && stationBattlesEqual(state.Battles, next) {
 		return false
 	}
@@ -317,10 +329,10 @@ func upsertCachedStationBattleWithFreshness(battle StationBattleData, now int64,
 	return true
 }
 
-func mergeStationBattles(existing []StationBattleData, observed StationBattleData, now int64, freshness Freshness) []StationBattleData {
-	next := make([]StationBattleData, 0, len(existing)+1)
+func mergeStationBattles(state stationBattleState, observed StationBattleData, now int64, freshness Freshness) []StationBattleData {
+	next := make([]StationBattleData, 0, len(state.Battles)+1)
 	keepObserved := observed.BattleEnd > now
-	for _, cached := range existing {
+	for _, cached := range state.Battles {
 		if cached.BattleEnd <= now {
 			continue
 		}
@@ -329,6 +341,13 @@ func mergeStationBattles(existing []StationBattleData, observed StationBattleDat
 				next = append(next, cached)
 				keepObserved = false
 			}
+			continue
+		}
+		if freshness.IsServer() && observed.UpdatedMs < cached.UpdatedMs {
+			if cached.BattleEnd >= observed.BattleEnd {
+				keepObserved = false
+			}
+			next = append(next, cached)
 			continue
 		}
 		if cached.BattleEnd <= observed.BattleEnd && (!freshness.IsServer() || cached.UpdatedMs <= observed.UpdatedMs) {
@@ -345,7 +364,10 @@ func mergeStationBattles(existing []StationBattleData, observed StationBattleDat
 
 func clearCachedStationBattles(stationId string, freshness Freshness, now int64) bool {
 	state, ok := stationBattleCache.Load(stationId)
+	updatedMs := freshness.TimestampMs()
 	if !ok {
+		// Store only "loaded with no retained active rows". We deliberately do
+		// not preserve freshness for empty observations; see stationBattleState.
 		storeStationBattles(stationId, nil)
 		return true
 	}
@@ -359,7 +381,7 @@ func clearCachedStationBattles(stationId string, freshness Freshness, now int64)
 
 	next := make([]StationBattleData, 0, len(state.Battles))
 	for _, cached := range state.Battles {
-		if cached.BattleEnd > now && cached.UpdatedMs > freshness.TimestampMs() {
+		if cached.BattleEnd > now && cached.UpdatedMs > updatedMs {
 			next = append(next, cached)
 		}
 	}

@@ -318,13 +318,16 @@ func saveGymRecordWithFreshness(ctx context.Context, db db.DbDetails, gym *Gym, 
 	}
 	nowMs := freshness.TimestampMs()
 	if !gym.IsNewRecord() && !gym.IsDirty() && !gym.IsInternalDirty() {
+		if !freshness.IsServer() {
+			return false
+		}
 		// default debounce is 15 minutes (900s). If reduce_updates is enabled, use 12 hours.
 		if gym.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
 			// if a gym is unchanged and was seen recently, skip saving
 			return false
 		}
 	}
-	gym.SetUpdatedMs(nowMs)
+	gym.SetUpdatedMs(freshness.TimestampMs())
 
 	// Capture isNewRecord before state changes
 	isNewRecord := gym.IsNewRecord()

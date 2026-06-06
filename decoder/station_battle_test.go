@@ -196,6 +196,61 @@ func TestObservedStationBattleEvictsCachedBattlesEndingNoLater(t *testing.T) {
 	}
 }
 
+func TestOlderServerStationBattleReplayOrdering(t *testing.T) {
+	initStationBattleCache()
+	now := time.Now().Unix()
+	newerBattle := testStationBattle("station-1", 2, 2, now-60, now+3600, 133)
+	newerBattle.UpdatedMs = 2000
+	storeStationBattles("station-1", []StationBattleData{newerBattle})
+
+	olderEarlierBattle := testStationBattle("station-1", 1, 1, now-60, now+1800, 527)
+	olderEarlierBattle.UpdatedMs = 1000
+	if upsertCachedStationBattleWithFreshness(olderEarlierBattle, now, ServerFreshness(1000, 0)) {
+		t.Fatal("expected older earlier-ending battle to be dropped by newer later-ending battle")
+	}
+	battles := getKnownStationBattles("station-1", now)
+	if len(battles) != 1 || battles[0].BreadBattleSeed != 2 {
+		t.Fatalf("expected only newer battle to remain, got %+v", battles)
+	}
+
+	olderLaterBattle := testStationBattle("station-1", 3, 3, now-60, now+7200, 374)
+	olderLaterBattle.UpdatedMs = 1000
+	if !upsertCachedStationBattleWithFreshness(olderLaterBattle, now, ServerFreshness(1000, 0)) {
+		t.Fatal("expected older later-ending battle to survive replay ordering")
+	}
+	battles = getKnownStationBattles("station-1", now)
+	expectedSeeds := []int64{2, 3}
+	if len(battles) != len(expectedSeeds) {
+		t.Fatalf("expected %d battles, got %+v", len(expectedSeeds), battles)
+	}
+	for i, expectedSeed := range expectedSeeds {
+		if battles[i].BreadBattleSeed != expectedSeed {
+			t.Fatalf("expected seed %d at index %d, got %+v", expectedSeed, i, battles)
+		}
+	}
+}
+
+func TestEmptyStationBattleStateAllowsOlderFutureBattle(t *testing.T) {
+	initStationBattleCache()
+	now := time.Now().Unix()
+	newerExpiredBattle := testStationBattle("station-1", 2, 2, now-3600, now-60, 133)
+	newerExpiredBattle.UpdatedMs = 2000
+	storeStationBattles("station-1", []StationBattleData{newerExpiredBattle})
+	if battles := getKnownStationBattles("station-1", now); len(battles) != 0 {
+		t.Fatalf("expected local expiry prune to return no active battles, got %+v", battles)
+	}
+
+	olderBattle := testStationBattle("station-1", 1, 1, now-60, now+3600, 527)
+	olderBattle.UpdatedMs = 1000
+	if !upsertCachedStationBattleWithFreshness(olderBattle, now, ServerFreshness(1000, 0)) {
+		t.Fatal("expected older future battle to survive empty cache state")
+	}
+	battles := getKnownStationBattles("station-1", now)
+	if len(battles) != 1 || battles[0].BreadBattleSeed != 1 {
+		t.Fatalf("expected older future battle to be cached, got %+v", battles)
+	}
+}
+
 func TestBuildStationResultUsesTopBattleForFlatFields(t *testing.T) {
 	initStationBattleCache()
 	now := time.Now().Unix()
@@ -536,7 +591,7 @@ func TestBuildStationResultSuppressesStaleBattleAfterExpiredHydratedCache(t *tes
 	}
 }
 
-func TestSaveStationRecordRefreshesStationWhenOnlyBattleListChanges(t *testing.T) {
+func TestSaveStationRecordWritesStationProjectionWhenOnlyBattleListChanges(t *testing.T) {
 	initStationBattleCache()
 	previousStationQueue := stationQueue
 	previousStationBattleQueue := stationBattleQueue
@@ -601,8 +656,8 @@ func TestSaveStationRecordRefreshesStationWhenOnlyBattleListChanges(t *testing.T
 	if stationBattleQueue.Size() != 1 {
 		t.Fatalf("expected battle-list change to write station battles, station battle queue size=%d", stationBattleQueue.Size())
 	}
-	if station.UpdatedMs <= (now-3600)*1000 {
-		t.Fatalf("expected station updated to advance, got %d", station.UpdatedMs)
+	if station.UpdatedMs < now*1000 {
+		t.Fatalf("expected fallback save to advance station UpdatedMs, got %d", station.UpdatedMs)
 	}
 }
 

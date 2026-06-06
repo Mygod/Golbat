@@ -53,3 +53,25 @@ func TestSavePokemonRecordWithFreshnessSkipsStaleServerTimestamp(t *testing.T) {
 		t.Fatalf("expected existing UpdatedMs to remain unchanged, got %d", pokemon.UpdatedMs.ValueOrZero())
 	}
 }
+
+func TestFallbackFreshnessAppliesAndAdvancesExistingPokemonTimestamp(t *testing.T) {
+	pokemon := &Pokemon{
+		PokemonData: PokemonData{
+			Id:        Uint64Str(1),
+			PokemonId: 2,
+			UpdatedMs: null.IntFrom(2000),
+		},
+		oldValues: PokemonOldValues{PokemonId: 1},
+		dirty:     true,
+	}
+
+	if !savePokemonRecordWithFreshness(context.Background(), db.DbDetails{}, pokemon, false, false, false, FallbackFreshness(9000)) {
+		t.Fatal("expected fallback freshness to save dirty existing pokemon")
+	}
+	if pokemon.UpdatedMs.ValueOrZero() != 9000 {
+		t.Fatalf("expected fallback save to advance UpdatedMs, got %d", pokemon.UpdatedMs.ValueOrZero())
+	}
+	if pokemon.Changed != 9 {
+		t.Fatalf("expected fallback save to apply non-watermark timestamps for changed fields, got %d", pokemon.Changed)
+	}
+}
