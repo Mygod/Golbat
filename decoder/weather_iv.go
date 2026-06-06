@@ -88,7 +88,7 @@ func ProactiveIVSwitch(ctx context.Context, db db.DbDetails, weatherUpdate Weath
 		pokemon, unlock, _ := peekPokemonRecordReadOnly(pokemonId, "ProactiveIVSwitch")
 		if pokemon != nil {
 			pokemonLocked++
-			if pokemonLookup.PokemonLookup.PokemonId == pokemon.PokemonId && (pokemon.IsDitto || int64(pokemonLookup.PokemonLookup.Form) == pokemon.Form.ValueOrZero()) && int64(newWeather) != pokemon.Weather.ValueOrZero() && pokemon.ExpireTimestamp.ValueOrZero() >= startUnix && pokemon.Updated.ValueOrZero() < timestamp {
+			if pokemonLookup.PokemonLookup.PokemonId == pokemon.PokemonId && (pokemon.IsDitto || int64(pokemonLookup.PokemonLookup.Form) == pokemon.Form.ValueOrZero()) && int64(newWeather) != pokemon.Weather.ValueOrZero() && pokemon.ExpireTimestamp.ValueOrZero() >= startUnix && updatedMsToSeconds(pokemon.UpdatedMs.ValueOrZero()) < timestamp {
 				pokemon.snapshotOldValues()
 				pokemon.repopulateIv(int64(newWeather), pokemon.IsStrong.ValueOrZero())
 				if !pokemon.Cp.Valid {
@@ -96,7 +96,7 @@ func ProactiveIVSwitch(ctx context.Context, db db.DbDetails, weatherUpdate Weath
 					pokemon.recomputeCpIfNeeded(ctx, db, map[int64]pogo.GameplayWeatherProto_WeatherCondition{
 						weatherUpdate.S2CellId: pogo.GameplayWeatherProto_WeatherCondition(newWeather),
 					})
-					savePokemonRecordAsAtTime(ctx, db, pokemon, false, toDB && pokemon.Cp.Valid, pokemon.Cp.Valid, timestamp)
+					savePokemonRecordWithFreshness(ctx, db, pokemon, false, toDB && pokemon.Cp.Valid, pokemon.Cp.Valid, ServerFreshness(timestamp*1000, 0))
 					pokemonUpdated++
 					if pokemon.Cp.Valid {
 						pokemonCpUpdated++

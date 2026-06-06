@@ -67,7 +67,7 @@ func buildGymResult(gym *Gym) ApiGymResult {
 		RaidEndTimestamp:       gym.RaidEndTimestamp,
 		RaidSpawnTimestamp:     gym.RaidSpawnTimestamp,
 		RaidBattleTimestamp:    gym.RaidBattleTimestamp,
-		Updated:                gym.Updated,
+		Updated:                updatedMsToSeconds(gym.UpdatedMs),
 		RaidPokemonId:          gym.RaidPokemonId,
 		GuardingPokemonId:      gym.GuardingPokemonId,
 		GuardingPokemonDisplay: gym.GuardingPokemonDisplay,

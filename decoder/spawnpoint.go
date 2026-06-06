@@ -18,7 +18,7 @@ import (
 
 // spawnpointSelectColumns defines the columns for spawnpoint queries.
 // Used by both single-row and bulk load queries to keep them in sync.
-const spawnpointSelectColumns = `id, lat, lon, updated, last_seen, despawn_sec`
+const spawnpointSelectColumns = `id, lat, lon, updated_ms, last_seen, despawn_sec`
 
 // SpawnpointData contains all database-persisted fields for Spawnpoint.
 // This struct is embedded in Spawnpoint and can be safely copied for write-behind queueing.
@@ -26,7 +26,7 @@ type SpawnpointData struct {
 	Id         int64    `db:"id"`
 	Lat        float64  `db:"lat"`
 	Lon        float64  `db:"lon"`
-	Updated    int64    `db:"updated"`
+	UpdatedMs  int64    `db:"updated_ms"`
 	LastSeen   int64    `db:"last_seen"`
 	DespawnSec null.Int `db:"despawn_sec"`
 }
@@ -142,12 +142,12 @@ func (s *Spawnpoint) SetDespawnSec(v null.Int) {
 	}
 }
 
-func (s *Spawnpoint) SetUpdated(v int64) {
-	if s.Updated != v {
+func (s *Spawnpoint) SetUpdatedMs(v int64) {
+	if s.UpdatedMs != v {
 		if dbDebugEnabled {
-			s.changedFields = append(s.changedFields, fmt.Sprintf("Updated:%d->%d", s.Updated, v))
+			s.changedFields = append(s.changedFields, fmt.Sprintf("UpdatedMs:%d->%d", s.UpdatedMs, v))
 		}
-		s.Updated = v
+		s.UpdatedMs = v
 		s.dirty = true
 	}
 }
@@ -264,10 +264,15 @@ func spawnpointUpdateFromWild(ctx context.Context, db db.DbDetails, wildPokemon 
 			log.Errorf("getOrCreateSpawnpointRecord: %s", err)
 			return
 		}
+		freshness := ServerFreshness(timestampMs, 0)
+		if freshness.IsStaleFor(spawnpoint.UpdatedMs, spawnpoint.IsNewRecord()) {
+			unlock()
+			return
+		}
 		spawnpoint.SetLat(wildPokemon.Latitude)
 		spawnpoint.SetLon(wildPokemon.Longitude)
 		spawnpoint.SetDespawnSec(null.IntFrom(int64(secondOfHour)))
-		spawnpointUpdate(ctx, db, spawnpoint)
+		spawnpointUpdate(ctx, db, spawnpoint, freshness)
 		unlock()
 	} else {
 		spawnpoint, unlock, err := getOrCreateSpawnpointRecord(ctx, db, spawnId, "spawnpointUpdateFromMap")
@@ -275,26 +280,34 @@ func spawnpointUpdateFromWild(ctx context.Context, db db.DbDetails, wildPokemon 
 			log.Errorf("getOrCreateSpawnpointRecord: %s", err)
 			return
 		}
+		freshness := ServerFreshness(timestampMs, 0)
+		if freshness.IsStaleFor(spawnpoint.UpdatedMs, spawnpoint.IsNewRecord()) {
+			unlock()
+			return
+		}
 		if spawnpoint.newRecord {
 			spawnpoint.SetLat(wildPokemon.Latitude)
 			spawnpoint.SetLon(wildPokemon.Longitude)
-			spawnpointUpdate(ctx, db, spawnpoint)
+			spawnpointUpdate(ctx, db, spawnpoint, freshness)
 		} else {
-			spawnpointSeen(ctx, db, spawnpoint)
-			spawnpointUpdate(ctx, db, spawnpoint)
+			spawnpointSeen(ctx, db, spawnpoint, freshness)
+			spawnpointUpdate(ctx, db, spawnpoint, freshness)
 		}
 		unlock()
 	}
 }
 
-func spawnpointUpdate(ctx context.Context, db db.DbDetails, spawnpoint *Spawnpoint) {
+func spawnpointUpdate(ctx context.Context, db db.DbDetails, spawnpoint *Spawnpoint, freshness Freshness) bool {
+	if freshness.IsStaleFor(spawnpoint.UpdatedMs, spawnpoint.IsNewRecord()) {
+		return false
+	}
 	// Skip save if not dirty and not new
 	if !spawnpoint.IsDirty() && !spawnpoint.IsNewRecord() {
-		return
+		return false
 	}
 
-	spawnpoint.SetUpdated(time.Now().Unix())  // ensure future updates are set correctly
-	spawnpoint.SetLastSeen(time.Now().Unix()) // ensure future updates are set correctly
+	spawnpoint.SetUpdatedMs(freshness.TimestampMs())
+	spawnpoint.SetLastSeen(freshness.Unix())
 
 	// Capture isNewRecord before state changes
 	isNewRecord := spawnpoint.IsNewRecord()
@@ -324,6 +337,7 @@ func spawnpointUpdate(ctx context.Context, db db.DbDetails, spawnpoint *Spawnpoi
 		spawnpoint.newRecord = false
 		spawnpointCache.Set(spawnpoint.Id, spawnpoint, ttlcache.DefaultTTL)
 	}
+	return true
 }
 
 // spawnpointWriteDB performs the actual database INSERT/UPDATE for a Spawnpoint
@@ -332,12 +346,12 @@ func spawnpointUpdate(ctx context.Context, db db.DbDetails, spawnpoint *Spawnpoi
 func spawnpointWriteDB(db db.DbDetails, spawnpoint *Spawnpoint) error {
 	ctx := context.Background()
 
-	_, err := db.GeneralDb.NamedExecContext(ctx, "INSERT INTO spawnpoint (id, lat, lon, updated, last_seen, despawn_sec)"+
-		"VALUES (:id, :lat, :lon, :updated, :last_seen, :despawn_sec)"+
+	_, err := db.GeneralDb.NamedExecContext(ctx, "INSERT INTO spawnpoint (id, lat, lon, updated_ms, last_seen, despawn_sec)"+
+		"VALUES (:id, :lat, :lon, :updated_ms, :last_seen, :despawn_sec)"+
 		"ON DUPLICATE KEY UPDATE "+
 		"lat=VALUES(lat),"+
 		"lon=VALUES(lon),"+
-		"updated=VALUES(updated),"+
+		"updated_ms=VALUES(updated_ms),"+
 		"last_seen=VALUES(last_seen),"+
 		"despawn_sec=VALUES(despawn_sec)", spawnpoint)
 
@@ -351,8 +365,8 @@ func spawnpointWriteDB(db db.DbDetails, spawnpoint *Spawnpoint) error {
 
 // spawnpointSeen updates the last_seen timestamp for a spawnpoint.
 // The spawnpoint must already be locked by the caller.
-func spawnpointSeen(ctx context.Context, db db.DbDetails, spawnpoint *Spawnpoint) {
-	now := time.Now().Unix()
+func spawnpointSeen(ctx context.Context, db db.DbDetails, spawnpoint *Spawnpoint, freshness Freshness) {
+	now := freshness.Unix()
 
 	// update at least every 6 hours (21600s). If reduce_updates is enabled, use 12 hours.
 	if now-spawnpoint.LastSeen > GetUpdateThreshold(21600) {

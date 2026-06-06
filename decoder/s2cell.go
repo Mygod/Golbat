@@ -2,7 +2,6 @@ package decoder
 
 import (
 	"context"
-	"time"
 
 	"golbat/db"
 
@@ -17,7 +16,7 @@ type S2Cell struct {
 	Latitude  float64  `db:"center_lat"`
 	Longitude float64  `db:"center_lon"`
 	Level     null.Int `db:"level"`
-	Updated   int64    `db:"updated"`
+	UpdatedMs int64    `db:"updated_ms"`
 }
 
 // CREATE TABLE `weather` (
@@ -29,16 +28,19 @@ type S2Cell struct {
 //  PRIMARY KEY (`id`)
 //)
 
-func saveS2CellRecords(ctx context.Context, db db.DbDetails, cellIds []uint64) {
-	now := time.Now().Unix()
-
+func saveS2CellRecords(ctx context.Context, db db.DbDetails, cells []RawS2CellData) {
 	// prepare list of cells to update
-	for _, cellId := range cellIds {
+	for _, cell := range cells {
+		cellId := cell.Cell
+		freshness := ServerFreshness(cell.Timestamp, 0)
 		var s2Cell *S2Cell
 
 		if c := s2CellCache.Get(cellId); c != nil {
 			cachedCell := c.Value()
-			if cachedCell.Updated > now-GetUpdateThreshold(900) {
+			if freshness.IsStaleFor(cachedCell.UpdatedMs, false) {
+				continue
+			}
+			if cachedCell.UpdatedMs > freshness.TimestampMs()-GetUpdateThreshold(900)*1000 {
 				continue
 			}
 			s2Cell = cachedCell
@@ -52,7 +54,7 @@ func saveS2CellRecords(ctx context.Context, db db.DbDetails, cellIds []uint64) {
 
 			s2CellCache.Set(s2Cell.Id, s2Cell, ttlcache.DefaultTTL)
 		}
-		s2Cell.Updated = now
+		s2Cell.UpdatedMs = freshness.TimestampMs()
 
 		if dbDebugEnabled {
 			log.Debugf("[DB_UPDATE] S2Cell Updated cell: %d", s2Cell.Id)
@@ -65,7 +67,7 @@ func saveS2CellRecords(ctx context.Context, db db.DbDetails, cellIds []uint64) {
 				Latitude:  s2Cell.Latitude,
 				Longitude: s2Cell.Longitude,
 				Level:     s2Cell.Level.ValueOrZero(),
-				Updated:   s2Cell.Updated,
+				UpdatedMs: s2Cell.UpdatedMs,
 			}, false, 0)
 		}
 	}

@@ -21,7 +21,7 @@ import (
 // pokestopSelectColumns defines the columns for pokestop queries.
 // Used by both single-row and bulk load queries to keep them in sync.
 const pokestopSelectColumns = `id, lat, lon, name, url, enabled, lure_expire_timestamp, last_modified_timestamp,
-	updated, quest_type, quest_timestamp, quest_target, quest_conditions,
+	updated_ms, quest_type, quest_timestamp, quest_target, quest_conditions,
 	quest_rewards, quest_template, quest_title, quest_expiry,
 	quest_reward_type, quest_item_id, quest_reward_amount, quest_pokemon_id, quest_pokemon_form_id,
 	alternative_quest_type, alternative_quest_timestamp, alternative_quest_target,
@@ -235,7 +235,7 @@ func createPokestopWebhooks(stop *Pokestop) {
 			Title:          stop.AlternativeQuestTitle,
 			Conditions:     json.RawMessage(stop.AlternativeQuestConditions.ValueOrZero()),
 			Rewards:        json.RawMessage(stop.AlternativeQuestRewards.ValueOrZero()),
-			Updated:        stop.Updated,
+			Updated:        updatedMsToSeconds(stop.UpdatedMs),
 			ArScanEligible: stop.ArScanEligible.ValueOrZero(),
 			PokestopUrl:    stop.Url.ValueOrZero(),
 			WithAr:         false,
@@ -261,7 +261,7 @@ func createPokestopWebhooks(stop *Pokestop) {
 			Title:          stop.QuestTitle,
 			Conditions:     json.RawMessage(stop.QuestConditions.ValueOrZero()),
 			Rewards:        json.RawMessage(stop.QuestRewards.ValueOrZero()),
-			Updated:        stop.Updated,
+			Updated:        updatedMsToSeconds(stop.UpdatedMs),
 			ArScanEligible: stop.ArScanEligible.ValueOrZero(),
 			PokestopUrl:    stop.Url.ValueOrZero(),
 			WithAr:         true,
@@ -298,7 +298,7 @@ func createPokestopWebhooks(stop *Pokestop) {
 			PowerUpLevel:            stop.PowerUpLevel.ValueOrZero(),
 			PowerUpPoints:           stop.PowerUpPoints.ValueOrZero(),
 			PowerUpEndTimestamp:     stop.PowerUpEndTimestamp.ValueOrZero(),
-			Updated:                 stop.Updated,
+			Updated:                 updatedMsToSeconds(stop.UpdatedMs),
 			ShowcaseFocus:           showcaseFocus,
 			ShowcasePokemonId:       stop.ShowcasePokemon,
 			ShowcasePokemonFormId:   stop.ShowcasePokemonForm,
@@ -314,15 +314,22 @@ func createPokestopWebhooks(stop *Pokestop) {
 }
 
 func savePokestopRecord(ctx context.Context, db db.DbDetails, pokestop *Pokestop) {
-	now := time.Now().Unix()
+	savePokestopRecordWithFreshness(ctx, db, pokestop, FallbackFreshness(0))
+}
+
+func savePokestopRecordWithFreshness(ctx context.Context, db db.DbDetails, pokestop *Pokestop, freshness Freshness) bool {
+	if freshness.IsStaleFor(pokestop.UpdatedMs, pokestop.IsNewRecord()) {
+		return false
+	}
+	nowMs := freshness.TimestampMs()
 	if !pokestop.IsNewRecord() && !pokestop.IsDirty() && !pokestop.IsInternalDirty() {
 		// default debounce is 15 minutes (900s). If reduce_updates is enabled, use 12 hours.
-		if pokestop.Updated > now-GetUpdateThreshold(900) {
+		if pokestop.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
 			// if a pokestop is unchanged and was seen recently, skip saving
-			return
+			return false
 		}
 	}
-	pokestop.SetUpdated(now)
+	pokestop.SetUpdatedMs(nowMs)
 
 	// Capture isNewRecord before state changes
 	isNewRecord := pokestop.IsNewRecord()
@@ -368,6 +375,7 @@ func savePokestopRecord(ctx context.Context, db db.DbDetails, pokestop *Pokestop
 		pokestop.newRecord = false
 	}
 	pokestop.ClearDirty()
+	return true
 }
 
 // pokestopWriteDB performs the actual database INSERT or UPDATE for a Pokestop
@@ -386,7 +394,7 @@ func pokestopWriteDB(db db.DbDetails, pokestop *Pokestop, isNewRecord bool) erro
 				alternative_quest_title, alternative_quest_expiry, alternative_quest_reward_type, alternative_quest_item_id,
 				alternative_quest_reward_amount, alternative_quest_pokemon_id, alternative_quest_pokemon_form_id,
 				cell_id, lure_id, sponsor_id, partner_id, ar_scan_eligible,
-				power_up_points, power_up_level, power_up_end_timestamp, updated, first_seen_timestamp,
+				power_up_points, power_up_level, power_up_end_timestamp, updated_ms, first_seen_timestamp,
 				description, showcase_focus, showcase_pokemon_id,
 				showcase_pokemon_form_id, showcase_pokemon_type_id, showcase_ranking_standard, showcase_expiry, showcase_rankings
 				)
@@ -400,7 +408,7 @@ func pokestopWriteDB(db db.DbDetails, pokestop *Pokestop, isNewRecord bool) erro
 				:alternative_quest_reward_amount, :alternative_quest_pokemon_id, :alternative_quest_pokemon_form_id,
 				:cell_id, :lure_id, :sponsor_id, :partner_id, :ar_scan_eligible,
 				:power_up_points, :power_up_level, :power_up_end_timestamp,
-				UNIX_TIMESTAMP(), UNIX_TIMESTAMP(),
+				:updated_ms, UNIX_TIMESTAMP(),
 				:description, :showcase_focus, :showcase_pokemon_id,
 				:showcase_pokemon_form_id, :showcase_pokemon_type_id, :showcase_ranking_standard, :showcase_expiry, :showcase_rankings)`,
 			pokestop)
@@ -420,7 +428,7 @@ func pokestopWriteDB(db db.DbDetails, pokestop *Pokestop, isNewRecord bool) erro
 				enabled = :enabled,
 				lure_expire_timestamp = :lure_expire_timestamp,
 				last_modified_timestamp = :last_modified_timestamp,
-				updated = :updated,
+				updated_ms = :updated_ms,
 				quest_type = :quest_type,
 				quest_timestamp = :quest_timestamp,
 				quest_target = :quest_target,

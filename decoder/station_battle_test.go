@@ -208,7 +208,7 @@ func TestBuildStationResultUsesTopBattleForFlatFields(t *testing.T) {
 			Lon:             2,
 			StartTime:       now - 3600,
 			EndTime:         now + 3600,
-			Updated:         now,
+			UpdatedMs:       now * 1000,
 			BattleLevel:     null.IntFrom(1),
 			BattleStart:     null.IntFrom(now - 60),
 			BattleEnd:       null.IntFrom(now + 1800),
@@ -272,7 +272,7 @@ func TestBuildStationResultProjectsFutureBattleFromCache(t *testing.T) {
 			StartTime:         now - 3600,
 			EndTime:           now + 3600,
 			IsBattleAvailable: true,
-			Updated:           now,
+			UpdatedMs:         now * 1000,
 			BattleLevel:       null.IntFrom(1),
 			BattleStart:       null.IntFrom(now + 600),
 			BattleEnd:         null.IntFrom(now + 3600),
@@ -344,7 +344,7 @@ func TestCreateStationWebhooksEmitsFutureBattle(t *testing.T) {
 			CellId:            123,
 			EndTime:           now + 7200,
 			IsBattleAvailable: false,
-			Updated:           now,
+			UpdatedMs:         now * 1000,
 		},
 	}
 	upsertCachedStationBattle(StationBattleData{
@@ -387,7 +387,7 @@ func TestCreateStationWebhooksUsesTopBattleForFlatFields(t *testing.T) {
 			Lon:             2,
 			CellId:          123,
 			EndTime:         now + 7200,
-			Updated:         now,
+			UpdatedMs:       now * 1000,
 			BattlePokemonId: null.IntFrom(527),
 		},
 	}
@@ -422,7 +422,7 @@ func TestSyncStationBattlesFromProtoClearsCachedBattlesWhenDetailsMissing(t *tes
 			Lon:       2,
 			StartTime: now - 3600,
 			EndTime:   now + 3600,
-			Updated:   now,
+			UpdatedMs: now * 1000,
 		},
 	}
 
@@ -432,9 +432,9 @@ func TestSyncStationBattlesFromProtoClearsCachedBattlesWhenDetailsMissing(t *tes
 		BattleWindowEndMs:   (now + 3600) * 1000,
 		BattleLevel:         pogo.BreadBattleLevel_BREAD_BATTLE_LEVEL_2,
 		BattlePokemon:       &pogo.PokemonProto{PokemonId: 133},
-	})
+	}, FallbackFreshness(now*1000))
 
-	syncStationBattlesFromProto(station, nil)
+	syncStationBattlesFromProto(station, nil, FallbackFreshness(now*1000))
 
 	state, ok := stationBattleCache.Load(station.Id)
 	if !ok || !state.Loaded || len(state.Battles) != 0 {
@@ -449,6 +449,56 @@ func TestSyncStationBattlesFromProtoClearsCachedBattlesWhenDetailsMissing(t *tes
 	}
 }
 
+func TestSyncStationBattlesFromProtoKeepsNewerServerBattle(t *testing.T) {
+	initStationBattleCache()
+	now := time.Now().Unix()
+	station := &Station{
+		StationData: StationData{
+			Id:        "station-1",
+			Name:      "Station",
+			Lat:       1,
+			Lon:       2,
+			StartTime: now - 3600,
+			EndTime:   now + 3600,
+			UpdatedMs: 2000,
+		},
+	}
+	newerBattle := testStationBattle(station.Id, 7, 2, now-60, now+3600, 527)
+	newerBattle.UpdatedMs = 2000
+	storeStationBattles(station.Id, []StationBattleData{newerBattle})
+
+	syncStationBattlesFromProto(station, &pogo.BreadBattleDetailProto{
+		BreadBattleSeed:     7,
+		BattleWindowStartMs: (now - 60) * 1000,
+		BattleWindowEndMs:   (now + 3600) * 1000,
+		BattleLevel:         pogo.BreadBattleLevel_BREAD_BATTLE_LEVEL_2,
+		BattlePokemon:       &pogo.PokemonProto{PokemonId: 133},
+	}, ServerFreshness(1000, 0))
+
+	battles := getKnownStationBattles(station.Id, now)
+	if len(battles) != 1 || battles[0].BattlePokemonId.ValueOrZero() != 527 || battles[0].UpdatedMs != 2000 {
+		t.Fatalf("expected older server battle to preserve newer cached row, got %+v", battles)
+	}
+	if station.IsInternalDirty() {
+		t.Fatal("expected stale battle observation not to mark station battle rows dirty")
+	}
+
+	syncStationBattlesFromProto(station, nil, ServerFreshness(1000, 0))
+	battles = getKnownStationBattles(station.Id, now)
+	if len(battles) != 1 || battles[0].BattlePokemonId.ValueOrZero() != 527 {
+		t.Fatalf("expected older missing battle details to preserve newer cached row, got %+v", battles)
+	}
+
+	syncStationBattlesFromProto(station, nil, ServerFreshness(3000, 0))
+	battles = getKnownStationBattles(station.Id, now)
+	if len(battles) != 0 {
+		t.Fatalf("expected newer missing battle details to clear cached row, got %+v", battles)
+	}
+	if !station.IsInternalDirty() {
+		t.Fatal("expected newer battle clear to mark station battle rows dirty")
+	}
+}
+
 func TestBuildStationResultSuppressesStaleBattleAfterExpiredHydratedCache(t *testing.T) {
 	initStationBattleCache()
 	now := time.Now().Unix()
@@ -460,7 +510,7 @@ func TestBuildStationResultSuppressesStaleBattleAfterExpiredHydratedCache(t *tes
 			Lon:             2,
 			StartTime:       now - 3600,
 			EndTime:         now + 3600,
-			Updated:         now,
+			UpdatedMs:       now * 1000,
 			BattleLevel:     null.IntFrom(1),
 			BattleStart:     null.IntFrom(now - 600),
 			BattleEnd:       null.IntFrom(now + 600),
@@ -531,7 +581,7 @@ func TestSaveStationRecordRefreshesStationWhenOnlyBattleListChanges(t *testing.T
 			Lat:             1,
 			Lon:             2,
 			EndTime:         now + 7200,
-			Updated:         now - 3600,
+			UpdatedMs:       (now - 3600) * 1000,
 			BattleLevel:     null.IntFrom(1),
 			BattleStart:     null.IntFrom(now - 60),
 			BattleEnd:       null.IntFrom(now + 1800),
@@ -551,8 +601,8 @@ func TestSaveStationRecordRefreshesStationWhenOnlyBattleListChanges(t *testing.T
 	if stationBattleQueue.Size() != 1 {
 		t.Fatalf("expected battle-list change to write station battles, station battle queue size=%d", stationBattleQueue.Size())
 	}
-	if station.Updated <= now-3600 {
-		t.Fatalf("expected station updated to advance, got %d", station.Updated)
+	if station.UpdatedMs <= (now-3600)*1000 {
+		t.Fatalf("expected station updated to advance, got %d", station.UpdatedMs)
 	}
 }
 

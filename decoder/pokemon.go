@@ -20,7 +20,7 @@ type PokemonData struct {
 	Size                    null.Int    `db:"size"`
 	Height                  null.Float  `db:"height"`
 	ExpireTimestamp         null.Int    `db:"expire_timestamp"`
-	Updated                 null.Int    `db:"updated"`
+	UpdatedMs               null.Int    `db:"updated_ms"`
 	PokemonId               int16       `db:"pokemon_id"`
 	Move1                   null.Int    `db:"move_1"`
 	Move2                   null.Int    `db:"move_2"`
@@ -480,12 +480,12 @@ func (pokemon *Pokemon) SetCapture3(v null.Float) {
 	}
 }
 
-func (pokemon *Pokemon) SetUpdated(v null.Int) {
-	if pokemon.Updated != v {
+func (pokemon *Pokemon) SetUpdatedMs(v null.Int) {
+	if pokemon.UpdatedMs != v {
 		if dbDebugEnabled {
-			pokemon.changedFields = append(pokemon.changedFields, fmt.Sprintf("Updated:%s->%s", FormatNull(pokemon.Updated), FormatNull(v)))
+			pokemon.changedFields = append(pokemon.changedFields, fmt.Sprintf("UpdatedMs:%s->%s", FormatNull(pokemon.UpdatedMs), FormatNull(v)))
 		}
-		pokemon.Updated = v
+		pokemon.UpdatedMs = v
 		pokemon.dirty = true
 	}
 }

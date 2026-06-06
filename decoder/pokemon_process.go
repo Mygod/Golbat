@@ -3,7 +3,6 @@ package decoder
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"golbat/db"
 	"golbat/pogo"
@@ -26,8 +25,9 @@ func UpdatePokemonRecordWithEncounterProto(ctx context.Context, db db.DbDetails,
 	}
 	defer unlock()
 
+	freshness := FallbackFreshness(timestamp)
 	pokemon.updatePokemonFromEncounterProto(ctx, db, encounter, username, timestamp)
-	savePokemonRecordAsAtTime(ctx, db, pokemon, true, true, true, timestamp/1000)
+	savePokemonRecordWithFreshness(ctx, db, pokemon, true, true, true, freshness)
 	// updateEncounterStats() should only be called for encounters, and called
 	// even if we have the pokemon record already.
 	updateEncounterStats(pokemon)
@@ -35,7 +35,7 @@ func UpdatePokemonRecordWithEncounterProto(ctx context.Context, db db.DbDetails,
 	return fmt.Sprintf("%d %d Pokemon %d CP%d", encounter.Pokemon.EncounterId, encounterId, pokemon.PokemonId, encounter.Pokemon.Pokemon.Cp)
 }
 
-func UpdatePokemonRecordWithDiskEncounterProto(ctx context.Context, db db.DbDetails, encounter *pogo.DiskEncounterOutProto, username string) string {
+func UpdatePokemonRecordWithDiskEncounterProto(ctx context.Context, db db.DbDetails, encounter *pogo.DiskEncounterOutProto, username string, freshness Freshness) string {
 	if encounter.Pokemon == nil {
 		return "No encounter"
 	}
@@ -59,7 +59,7 @@ func UpdatePokemonRecordWithDiskEncounterProto(ctx context.Context, db db.DbDeta
 	defer unlock()
 
 	pokemon.updatePokemonFromDiskEncounterProto(ctx, db, encounter, username)
-	savePokemonRecordAsAtTime(ctx, db, pokemon, true, true, true, time.Now().Unix())
+	savePokemonRecordWithFreshness(ctx, db, pokemon, true, true, true, freshness)
 	// updateEncounterStats() should only be called for encounters, and called
 	// even if we have the pokemon record already.
 	updateEncounterStats(pokemon)
@@ -78,7 +78,7 @@ func UpdatePokemonRecordWithTappableEncounter(ctx context.Context, db db.DbDetai
 	defer unlock()
 
 	pokemon.updatePokemonFromTappableEncounterProto(ctx, db, request, encounter, username, timestampMs)
-	savePokemonRecordAsAtTime(ctx, db, pokemon, true, true, true, time.Now().Unix())
+	savePokemonRecordWithFreshness(ctx, db, pokemon, true, true, true, FallbackFreshness(timestampMs))
 	// updateEncounterStats() should only be called for encounters, and called
 	// even if we have the pokemon record already.
 	updateEncounterStats(pokemon)

@@ -186,7 +186,7 @@ func (gym *Gym) updateGymFromFortProto(fortData *pogo.FortDetailsOutProto) *Gym 
 	return gym
 }
 
-func (gym *Gym) updateGymFromGymInfoOutProto(gymData *pogo.GymGetInfoOutProto) *Gym {
+func (gym *Gym) updateGymFromGymInfoOutProto(gymData *pogo.GymGetInfoOutProto, observationMs int64) *Gym {
 	gym.SetId(gymData.GymStatusAndDefenders.PokemonFortProto.FortId)
 	gym.SetLat(gymData.GymStatusAndDefenders.PokemonFortProto.Latitude)
 	gym.SetLon(gymData.GymStatusAndDefenders.PokemonFortProto.Longitude)
@@ -226,7 +226,7 @@ func (gym *Gym) updateGymFromGymInfoOutProto(gymData *pogo.GymGetInfoOutProto) *
 		}
 
 		var defenders []pokemonGymDefender
-		now := time.Now()
+		now := time.UnixMilli(observationMs)
 		for _, protoDefender := range status.GymDefender {
 			motivatedPokemon := protoDefender.MotivatedPokemon
 			pokemonDisplay := motivatedPokemon.Pokemon.PokemonDisplay
@@ -259,7 +259,7 @@ func (gym *Gym) updateGymFromGymInfoOutProto(gymData *pogo.GymGetInfoOutProto) *
 		gym.SetDefenders(null.StringFrom(string(bDefenders)))
 
 		if fortProto := status.PokemonFortProto; fortProto != nil {
-			gym.updateGymFromFort(fortProto, 0, 0)
+			gym.updateGymFromFort(fortProto, 0, observationMs)
 		}
 	}
 

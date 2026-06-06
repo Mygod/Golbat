@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"github.com/jellydator/ttlcache/v3"
 	log "github.com/sirupsen/logrus"
@@ -16,7 +15,7 @@ import (
 
 // incidentSelectColumns defines the columns for incident queries.
 // Used by both single-row and bulk load queries to keep them in sync.
-const incidentSelectColumns = "id, pokestop_id, start, expiration, display_type, style, `character`, updated, confirmed, slot_1_pokemon_id, slot_1_form, slot_2_pokemon_id, slot_2_form, slot_3_pokemon_id, slot_3_form"
+const incidentSelectColumns = "id, pokestop_id, start, expiration, display_type, style, `character`, updated_ms, confirmed, slot_1_pokemon_id, slot_1_form, slot_2_pokemon_id, slot_2_form, slot_3_pokemon_id, slot_3_form"
 
 func loadIncidentFromDatabase(ctx context.Context, db db.DbDetails, incidentId string, incident *Incident) error {
 	err := db.GeneralDb.GetContext(ctx, incident,
@@ -116,12 +115,19 @@ func getOrCreateIncidentRecord(ctx context.Context, db db.DbDetails, incidentId 
 }
 
 func saveIncidentRecord(ctx context.Context, db db.DbDetails, incident *Incident) {
+	saveIncidentRecordWithFreshness(ctx, db, incident, FallbackFreshness(0))
+}
+
+func saveIncidentRecordWithFreshness(ctx context.Context, db db.DbDetails, incident *Incident, freshness Freshness) bool {
+	if freshness.IsStaleFor(incident.UpdatedMs, incident.IsNewRecord()) {
+		return false
+	}
 	// Skip save if not dirty and not new
 	if !incident.IsDirty() && !incident.IsNewRecord() {
-		return
+		return false
 	}
 
-	incident.SetUpdated(time.Now().Unix())
+	incident.SetUpdatedMs(freshness.TimestampMs())
 
 	// Capture isNewRecord before state changes
 	isNewRecord := incident.IsNewRecord()
@@ -169,14 +175,15 @@ func saveIncidentRecord(ctx context.Context, db db.DbDetails, incident *Incident
 		incident.newRecord = false
 		incidentCache.Set(incident.Id, incident, ttlcache.DefaultTTL)
 	}
+	return true
 }
 
 // incidentWriteDB performs the actual database INSERT/UPDATE for an Incident
 // This is called by both direct writes and the write-behind queue
 func incidentWriteDB(db db.DbDetails, incident *Incident, isNewRecord bool) error {
 	if isNewRecord {
-		res, err := db.GeneralDb.NamedExec("INSERT INTO incident (id, pokestop_id, start, expiration, display_type, style, `character`, updated, confirmed, slot_1_pokemon_id, slot_1_form, slot_2_pokemon_id, slot_2_form, slot_3_pokemon_id, slot_3_form) "+
-			"VALUES (:id, :pokestop_id, :start, :expiration, :display_type, :style, :character, :updated, :confirmed, :slot_1_pokemon_id, :slot_1_form, :slot_2_pokemon_id, :slot_2_form, :slot_3_pokemon_id, :slot_3_form)", incident)
+		res, err := db.GeneralDb.NamedExec("INSERT INTO incident (id, pokestop_id, start, expiration, display_type, style, `character`, updated_ms, confirmed, slot_1_pokemon_id, slot_1_form, slot_2_pokemon_id, slot_2_form, slot_3_pokemon_id, slot_3_form) "+
+			"VALUES (:id, :pokestop_id, :start, :expiration, :display_type, :style, :character, :updated_ms, :confirmed, :slot_1_pokemon_id, :slot_1_form, :slot_2_pokemon_id, :slot_2_form, :slot_3_pokemon_id, :slot_3_form)", incident)
 
 		statsCollector.IncDbQuery("insert incident", err)
 		if err != nil {
@@ -191,7 +198,7 @@ func incidentWriteDB(db db.DbDetails, incident *Incident, isNewRecord bool) erro
 			"display_type = :display_type, "+
 			"style = :style, "+
 			"`character` = :character, "+
-			"updated = :updated, "+
+			"updated_ms = :updated_ms, "+
 			"confirmed = :confirmed, "+
 			"slot_1_pokemon_id = :slot_1_pokemon_id, "+
 			"slot_1_form = :slot_1_form, "+
@@ -250,7 +257,7 @@ func createIncidentWebhooks(ctx context.Context, db db.DbDetails, incident *Inci
 			Style:                   incident.Style,
 			GruntType:               incident.Character,
 			Character:               incident.Character,
-			Updated:                 incident.Updated,
+			Updated:                 updatedMsToSeconds(incident.UpdatedMs),
 			Confirmed:               incident.Confirmed,
 			Lineup:                  lineup,
 		}

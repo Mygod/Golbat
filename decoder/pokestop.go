@@ -18,7 +18,7 @@ type PokestopData struct {
 	Url                           null.String `db:"url"`
 	LureExpireTimestamp           null.Int    `db:"lure_expire_timestamp"`
 	LastModifiedTimestamp         null.Int    `db:"last_modified_timestamp"`
-	Updated                       int64       `db:"updated"`
+	UpdatedMs                     int64       `db:"updated_ms"`
 	Enabled                       null.Bool   `db:"enabled"`
 	QuestType                     null.Int    `db:"quest_type"`
 	QuestTimestamp                null.Int    `db:"quest_timestamp"`
@@ -746,12 +746,12 @@ func (p *Pokestop) SetShowcaseRankings(v null.String) {
 	}
 }
 
-func (p *Pokestop) SetUpdated(v int64) {
-	if p.Updated != v {
+func (p *Pokestop) SetUpdatedMs(v int64) {
+	if p.UpdatedMs != v {
 		if dbDebugEnabled {
-			p.changedFields = append(p.changedFields, fmt.Sprintf("Updated:%d->%d", p.Updated, v))
+			p.changedFields = append(p.changedFields, fmt.Sprintf("UpdatedMs:%d->%d", p.UpdatedMs, v))
 		}
-		p.Updated = v
+		p.UpdatedMs = v
 		p.dirty = true
 	}
 }

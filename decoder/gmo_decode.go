@@ -20,6 +20,7 @@ func UpdateFortBatch(ctx context.Context, db db.DbDetails, scanParameters ScanPa
 
 	for _, fort := range p {
 		fortId := fort.Data.FortId
+		freshness := ServerFreshness(fort.Timestamp, 0)
 		if fort.Data.FortType == pogo.FortType_CHECKPOINT && scanParameters.ProcessPokestops {
 			pokestop, unlock, err := getOrCreatePokestopRecord(ctx, db, fortId, "UpdateFortBatch")
 			if err != nil {
@@ -27,11 +28,17 @@ func UpdateFortBatch(ctx context.Context, db db.DbDetails, scanParameters ScanPa
 				continue
 			}
 
-			pokestop.updatePokestopFromFort(fort.Data, fort.Cell, fort.Timestamp/1000)
-			isNewRecord := pokestop.IsNewRecord()
+			pokestopStale := freshness.IsStaleFor(pokestop.UpdatedMs, pokestop.IsNewRecord())
+			isNewRecord := false
+			if pokestopStale {
+				unlock()
+			} else {
+				pokestop.updatePokestopFromFort(fort.Data, fort.Cell, freshness.Unix())
+				isNewRecord = pokestop.IsNewRecord()
 
-			savePokestopRecord(ctx, db, pokestop)
-			unlock()
+				savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
+				unlock()
+			}
 
 			// If this was a new pokestop, check if it was converted from a gym and copy shared fields.
 			// To avoid deadlock, we do this after releasing the pokestop lock.
@@ -47,9 +54,13 @@ func UpdateFortBatch(ctx context.Context, db db.DbDetails, scanParameters ScanPa
 					if err != nil {
 						log.Errorf("getPokestopRecordForUpdate (shared fields): %s", err)
 					} else if pokestop != nil {
-						pokestop.ApplySharedFields(sharedFields)
-						savePokestopRecord(ctx, db, pokestop)
-						unlock()
+						if freshness.IsStaleFor(pokestop.UpdatedMs, pokestop.IsNewRecord()) {
+							unlock()
+						} else {
+							pokestop.ApplySharedFields(sharedFields)
+							savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
+							unlock()
+						}
 					}
 				}
 			}
@@ -68,8 +79,12 @@ func UpdateFortBatch(ctx context.Context, db db.DbDetails, scanParameters ScanPa
 					log.Errorf("getOrCreateIncidentRecord: %s", err)
 					continue
 				}
+				if freshness.IsStaleFor(incident.UpdatedMs, incident.IsNewRecord()) {
+					unlock()
+					continue
+				}
 				incident.updateFromPokestopIncidentDisplay(incidentProto)
-				saveIncidentRecord(ctx, db, incident)
+				saveIncidentRecordWithFreshness(ctx, db, incident, freshness)
 				unlock()
 			}
 		}
@@ -81,11 +96,16 @@ func UpdateFortBatch(ctx context.Context, db db.DbDetails, scanParameters ScanPa
 				continue
 			}
 
-			gym.updateGymFromFort(fort.Data, fort.Cell, fort.Timestamp)
-			isNewRecord := gym.IsNewRecord()
+			isNewRecord := false
+			if freshness.IsStaleFor(gym.UpdatedMs, gym.IsNewRecord()) {
+				gymUnlock()
+			} else {
+				gym.updateGymFromFort(fort.Data, fort.Cell, fort.Timestamp)
+				isNewRecord = gym.IsNewRecord()
 
-			saveGymRecord(ctx, db, gym)
-			gymUnlock()
+				saveGymRecordWithFreshness(ctx, db, gym, freshness)
+				gymUnlock()
+			}
 
 			// If this was a new gym, check if it was converted from a pokestop and copy shared fields.
 			// To avoid deadlock, we do this after releasing the gym lock.
@@ -101,9 +121,13 @@ func UpdateFortBatch(ctx context.Context, db db.DbDetails, scanParameters ScanPa
 					if err != nil {
 						log.Errorf("getGymRecordForUpdate (shared fields): %s", err)
 					} else if gym != nil {
-						gym.ApplySharedFields(sharedFields)
-						saveGymRecord(ctx, db, gym)
-						gymUnlock()
+						if freshness.IsStaleFor(gym.UpdatedMs, gym.IsNewRecord()) {
+							gymUnlock()
+						} else {
+							gym.ApplySharedFields(sharedFields)
+							saveGymRecordWithFreshness(ctx, db, gym, freshness)
+							gymUnlock()
+						}
 					}
 				}
 			}
@@ -119,9 +143,12 @@ func UpdateStationBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 			log.Errorf("getOrCreateStationRecord: %s", err)
 			continue
 		}
-		station.updateFromStationProto(stationProto.Data, stationProto.Cell)
-		syncStationBattlesFromProto(station, stationProto.Data.BattleDetails)
-		saveStationRecord(ctx, db, station)
+		freshness := ServerFreshness(stationProto.Timestamp, 0)
+		if !freshness.IsStaleFor(station.UpdatedMs, station.IsNewRecord()) {
+			station.updateFromStationProto(stationProto.Data, stationProto.Cell)
+		}
+		syncStationBattlesFromProto(station, stationProto.Data.BattleDetails, freshness)
+		saveStationRecordWithFreshness(ctx, db, station, freshness)
 		unlock()
 	}
 }
@@ -145,10 +172,15 @@ func UpdatePokemonBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 				continue
 			}
 
-			updateTime := wild.Timestamp / 1000
+			freshness := ServerFreshness(wild.Timestamp, 0)
+			if freshness.IsStaleFor(pokemon.UpdatedMs.ValueOrZero(), pokemon.isNewRecord()) {
+				unlock()
+				continue
+			}
+			updateTime := freshness.Unix()
 			if pokemon.isNewRecord() || pokemon.wildSignificantUpdate(wild.Data, updateTime) {
 				pokemon.updateFromWild(ctx, db, wild.Data, int64(wild.Cell), weatherLookup, wild.Timestamp, username)
-				savePokemonRecordAsAtTime(ctx, db, pokemon, false, true, true, updateTime)
+				savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 			}
 			unlock()
 		}
@@ -165,10 +197,15 @@ func UpdatePokemonBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 					continue
 				}
 
-				updateTime := nearby.Timestamp / 1000
+				freshness := ServerFreshness(nearby.Timestamp, 0)
+				if freshness.IsStaleFor(pokemon.UpdatedMs.ValueOrZero(), pokemon.isNewRecord()) {
+					unlock()
+					continue
+				}
+				updateTime := freshness.Unix()
 				if pokemon.isNewRecord() || pokemon.nearbySignificantUpdate(nearby.Data, updateTime) {
 					pokemon.updateFromNearby(ctx, db, nearby.Data, int64(nearby.Cell), weatherLookup, nearby.Timestamp, username)
-					savePokemonRecordAsAtTime(ctx, db, pokemon, false, true, true, nearby.Timestamp/1000)
+					savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 				}
 
 				unlock()
@@ -185,6 +222,11 @@ func UpdatePokemonBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 			continue
 		}
 
+		freshness := ServerFreshness(mapPokemon.Timestamp, 0)
+		if freshness.IsStaleFor(pokemon.UpdatedMs.ValueOrZero(), pokemon.isNewRecord()) {
+			unlock()
+			continue
+		}
 		pokemon.updateFromMap(ctx, db, mapPokemon.Data, int64(mapPokemon.Cell), weatherLookup, mapPokemon.Timestamp, username)
 		storedDiskEncounter := diskEncounterCache.Get(encounterId)
 		if storedDiskEncounter != nil {
@@ -193,7 +235,7 @@ func UpdatePokemonBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 			pokemon.updatePokemonFromDiskEncounterProto(ctx, db, diskEncounter, username)
 			//log.Infof("Processed stored disk encounter")
 		}
-		savePokemonRecordAsAtTime(ctx, db, pokemon, false, true, true, mapPokemon.Timestamp/1000)
+		savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 
 		unlock()
 	}
@@ -234,6 +276,6 @@ func UpdateClientWeatherBatch(ctx context.Context, db db.DbDetails, p []*pogo.Cl
 	return updates
 }
 
-func UpdateClientMapS2CellBatch(ctx context.Context, db db.DbDetails, cellIds []uint64) {
-	saveS2CellRecords(ctx, db, cellIds)
+func UpdateClientMapS2CellBatch(ctx context.Context, db db.DbDetails, cells []RawS2CellData) {
+	saveS2CellRecords(ctx, db, cells)
 }

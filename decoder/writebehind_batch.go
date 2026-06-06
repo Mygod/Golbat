@@ -18,7 +18,7 @@ type S2CellData struct {
 	Latitude  float64 `db:"center_lat"`
 	Longitude float64 `db:"center_lon"`
 	Level     int64   `db:"level"`
-	Updated   int64   `db:"updated"`
+	UpdatedMs int64   `db:"updated_ms"`
 }
 
 // Typed queues for each entity type - using native key types for efficiency
@@ -287,7 +287,7 @@ INSERT INTO pokestop (
 	alternative_quest_item_id, alternative_quest_reward_amount,
 	alternative_quest_pokemon_id, alternative_quest_pokemon_form_id,
 	cell_id, lure_id, deleted, sponsor_id, partner_id, ar_scan_eligible,
-	power_up_points, power_up_level, power_up_end_timestamp, updated, first_seen_timestamp,
+	power_up_points, power_up_level, power_up_end_timestamp, updated_ms, first_seen_timestamp,
 	description, showcase_focus, showcase_pokemon_id, showcase_pokemon_form_id,
 	showcase_pokemon_type_id, showcase_ranking_standard, showcase_expiry, showcase_rankings
 )
@@ -302,7 +302,7 @@ VALUES (
 	:alternative_quest_item_id, :alternative_quest_reward_amount,
 	:alternative_quest_pokemon_id, :alternative_quest_pokemon_form_id,
 	:cell_id, :lure_id, :deleted, :sponsor_id, :partner_id, :ar_scan_eligible,
-	:power_up_points, :power_up_level, :power_up_end_timestamp, :updated, UNIX_TIMESTAMP(),
+	:power_up_points, :power_up_level, :power_up_end_timestamp, :updated_ms, UNIX_TIMESTAMP(),
 	:description, :showcase_focus, :showcase_pokemon_id, :showcase_pokemon_form_id,
 	:showcase_pokemon_type_id, :showcase_ranking_standard, :showcase_expiry, :showcase_rankings
 )
@@ -349,7 +349,7 @@ ON DUPLICATE KEY UPDATE
 	power_up_points = VALUES(power_up_points),
 	power_up_level = VALUES(power_up_level),
 	power_up_end_timestamp = VALUES(power_up_end_timestamp),
-	updated = VALUES(updated),
+	updated_ms = VALUES(updated_ms),
 	description = VALUES(description),
 	showcase_focus = VALUES(showcase_focus),
 	showcase_pokemon_id = VALUES(showcase_pokemon_id),
@@ -363,7 +363,7 @@ ON DUPLICATE KEY UPDATE
 const gymBatchUpsertQuery = `
 INSERT INTO gym (
 	id, lat, lon, name, url, last_modified_timestamp, raid_end_timestamp,
-	raid_spawn_timestamp, raid_battle_timestamp, updated, raid_pokemon_id,
+	raid_spawn_timestamp, raid_battle_timestamp, updated_ms, raid_pokemon_id,
 	guarding_pokemon_id, guarding_pokemon_display, available_slots, team_id,
 	raid_level, enabled, ex_raid_eligible, in_battle, raid_pokemon_move_1,
 	raid_pokemon_move_2, raid_pokemon_form, raid_pokemon_alignment, raid_pokemon_cp,
@@ -374,7 +374,7 @@ INSERT INTO gym (
 )
 VALUES (
 	:id, :lat, :lon, :name, :url, :last_modified_timestamp, :raid_end_timestamp,
-	:raid_spawn_timestamp, :raid_battle_timestamp, :updated, :raid_pokemon_id,
+	:raid_spawn_timestamp, :raid_battle_timestamp, :updated_ms, :raid_pokemon_id,
 	:guarding_pokemon_id, :guarding_pokemon_display, :available_slots, :team_id,
 	:raid_level, :enabled, :ex_raid_eligible, :in_battle, :raid_pokemon_move_1,
 	:raid_pokemon_move_2, :raid_pokemon_form, :raid_pokemon_alignment, :raid_pokemon_cp,
@@ -392,7 +392,7 @@ ON DUPLICATE KEY UPDATE
 	raid_end_timestamp = VALUES(raid_end_timestamp),
 	raid_spawn_timestamp = VALUES(raid_spawn_timestamp),
 	raid_battle_timestamp = VALUES(raid_battle_timestamp),
-	updated = VALUES(updated),
+	updated_ms = VALUES(updated_ms),
 	raid_pokemon_id = VALUES(raid_pokemon_id),
 	guarding_pokemon_id = VALUES(guarding_pokemon_id),
 	guarding_pokemon_display = VALUES(guarding_pokemon_display),
@@ -430,14 +430,14 @@ INSERT INTO pokemon (
 	id, pokemon_id, lat, lon, spawn_id, expire_timestamp, atk_iv, def_iv, sta_iv,
 	golbat_internal, iv, move_1, move_2, gender, form, cp, level, strong, weather,
 	costume, weight, height, size, display_pokemon_id, display_pokemon_form, is_ditto, pokestop_id,
-	updated, first_seen_timestamp, changed, cell_id, expire_timestamp_verified,
+	updated_ms, first_seen_timestamp, changed, cell_id, expire_timestamp_verified,
 	shiny, username, pvp, is_event, seen_type
 )
 VALUES (
 	:id, :pokemon_id, :lat, :lon, :spawn_id, :expire_timestamp, :atk_iv, :def_iv, :sta_iv,
 	:golbat_internal, :iv, :move_1, :move_2, :gender, :form, :cp, :level, :strong, :weather,
 	:costume, :weight, :height, :size, :display_pokemon_id, :display_pokemon_form, :is_ditto, :pokestop_id,
-	:updated, :first_seen_timestamp, :changed, :cell_id, :expire_timestamp_verified,
+	:updated_ms, :first_seen_timestamp, :changed, :cell_id, :expire_timestamp_verified,
 	:shiny, :username, :pvp, :is_event, :seen_type
 )
 ON DUPLICATE KEY UPDATE
@@ -467,7 +467,7 @@ ON DUPLICATE KEY UPDATE
 	display_pokemon_form = VALUES(display_pokemon_form),
 	is_ditto = VALUES(is_ditto),
 	pokestop_id = VALUES(pokestop_id),
-	updated = VALUES(updated),
+	updated_ms = VALUES(updated_ms),
 	first_seen_timestamp = VALUES(first_seen_timestamp),
 	changed = VALUES(changed),
 	cell_id = VALUES(cell_id),
@@ -481,15 +481,15 @@ ON DUPLICATE KEY UPDATE
 
 const spawnpointBatchUpsertQuery = `
 INSERT INTO spawnpoint (
-	id, lat, lon, updated, last_seen, despawn_sec
+	id, lat, lon, updated_ms, last_seen, despawn_sec
 )
 VALUES (
-	:id, :lat, :lon, :updated, :last_seen, :despawn_sec
+	:id, :lat, :lon, :updated_ms, :last_seen, :despawn_sec
 )
 ON DUPLICATE KEY UPDATE
 	lat = VALUES(lat),
 	lon = VALUES(lon),
-	updated = VALUES(updated),
+	updated_ms = VALUES(updated_ms),
 	last_seen=VALUES(last_seen),
 	despawn_sec = VALUES(despawn_sec)
 `
@@ -557,7 +557,7 @@ ON DUPLICATE KEY UPDATE
 const stationBatchUpsertQuery = `
 INSERT INTO station (
 	id, lat, lon, name, cell_id, start_time, end_time, cooldown_complete,
-	is_battle_available, is_inactive, updated, battle_level, battle_start, battle_end,
+	is_battle_available, is_inactive, updated_ms, battle_level, battle_start, battle_end,
 	battle_pokemon_id, battle_pokemon_form, battle_pokemon_costume, battle_pokemon_gender,
 	battle_pokemon_alignment, battle_pokemon_bread_mode, battle_pokemon_move_1, battle_pokemon_move_2,
 	battle_pokemon_stamina, battle_pokemon_cp_multiplier, total_stationed_pokemon,
@@ -565,7 +565,7 @@ INSERT INTO station (
 )
 VALUES (
 	:id, :lat, :lon, :name, :cell_id, :start_time, :end_time, :cooldown_complete,
-	:is_battle_available, :is_inactive, :updated, :battle_level, :battle_start, :battle_end,
+	:is_battle_available, :is_inactive, :updated_ms, :battle_level, :battle_start, :battle_end,
 	:battle_pokemon_id, :battle_pokemon_form, :battle_pokemon_costume, :battle_pokemon_gender,
 	:battle_pokemon_alignment, :battle_pokemon_bread_mode, :battle_pokemon_move_1, :battle_pokemon_move_2,
 	:battle_pokemon_stamina, :battle_pokemon_cp_multiplier, :total_stationed_pokemon,
@@ -581,7 +581,7 @@ ON DUPLICATE KEY UPDATE
 	cooldown_complete = VALUES(cooldown_complete),
 	is_battle_available = VALUES(is_battle_available),
 	is_inactive = VALUES(is_inactive),
-	updated = VALUES(updated),
+	updated_ms = VALUES(updated_ms),
 	battle_level = VALUES(battle_level),
 	battle_start = VALUES(battle_start),
 	battle_end = VALUES(battle_end),
@@ -602,11 +602,11 @@ ON DUPLICATE KEY UPDATE
 
 const incidentBatchUpsertQuery = "INSERT INTO incident (" +
 	"id, pokestop_id, start, expiration, display_type, style, `character`, " +
-	"updated, confirmed, slot_1_pokemon_id, slot_1_form, slot_2_pokemon_id, " +
+	"updated_ms, confirmed, slot_1_pokemon_id, slot_1_form, slot_2_pokemon_id, " +
 	"slot_2_form, slot_3_pokemon_id, slot_3_form" +
 	") VALUES (" +
 	":id, :pokestop_id, :start, :expiration, :display_type, :style, :character, " +
-	":updated, :confirmed, :slot_1_pokemon_id, :slot_1_form, :slot_2_pokemon_id, " +
+	":updated_ms, :confirmed, :slot_1_pokemon_id, :slot_1_form, :slot_2_pokemon_id, " +
 	":slot_2_form, :slot_3_pokemon_id, :slot_3_form" +
 	") ON DUPLICATE KEY UPDATE " +
 	"start = VALUES(start), " +
@@ -614,7 +614,7 @@ const incidentBatchUpsertQuery = "INSERT INTO incident (" +
 	"display_type = VALUES(display_type), " +
 	"style = VALUES(style), " +
 	"`character` = VALUES(`character`), " +
-	"updated = VALUES(updated), " +
+	"updated_ms = VALUES(updated_ms), " +
 	"confirmed = VALUES(confirmed), " +
 	"slot_1_pokemon_id = VALUES(slot_1_pokemon_id), " +
 	"slot_1_form = VALUES(slot_1_form), " +
@@ -624,7 +624,7 @@ const incidentBatchUpsertQuery = "INSERT INTO incident (" +
 	"slot_3_form = VALUES(slot_3_form)"
 
 const s2cellBatchUpsertQuery = `
-INSERT INTO s2cell (id, center_lat, center_lon, level, updated)
-VALUES (:id, :center_lat, :center_lon, :level, :updated)
-ON DUPLICATE KEY UPDATE updated = VALUES(updated)
+INSERT INTO s2cell (id, center_lat, center_lon, level, updated_ms)
+VALUES (:id, :center_lat, :center_lon, :level, :updated_ms)
+ON DUPLICATE KEY UPDATE updated_ms = VALUES(updated_ms)
 `

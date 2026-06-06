@@ -21,7 +21,7 @@ import (
 // gymSelectColumns defines the columns for gym queries.
 // Used by both single-row and bulk load queries to keep them in sync.
 const gymSelectColumns = `id, lat, lon, name, url, last_modified_timestamp, raid_end_timestamp, raid_spawn_timestamp,
-	raid_battle_timestamp, updated, raid_pokemon_id, guarding_pokemon_id, guarding_pokemon_display,
+	raid_battle_timestamp, updated_ms, raid_pokemon_id, guarding_pokemon_id, guarding_pokemon_display,
 	available_slots, team_id, raid_level, enabled, ex_raid_eligible, in_battle, raid_pokemon_move_1,
 	raid_pokemon_move_2, raid_pokemon_form, raid_pokemon_alignment, raid_pokemon_cp, raid_is_exclusive,
 	cell_id, deleted, total_cp, first_seen_timestamp, raid_pokemon_gender, sponsor_id, partner_id,
@@ -309,15 +309,22 @@ func createGymWebhooks(gym *Gym, areas []geo.AreaName) {
 }
 
 func saveGymRecord(ctx context.Context, db db.DbDetails, gym *Gym) {
-	now := time.Now().Unix()
+	saveGymRecordWithFreshness(ctx, db, gym, FallbackFreshness(0))
+}
+
+func saveGymRecordWithFreshness(ctx context.Context, db db.DbDetails, gym *Gym, freshness Freshness) bool {
+	if freshness.IsStaleFor(gym.UpdatedMs, gym.IsNewRecord()) {
+		return false
+	}
+	nowMs := freshness.TimestampMs()
 	if !gym.IsNewRecord() && !gym.IsDirty() && !gym.IsInternalDirty() {
 		// default debounce is 15 minutes (900s). If reduce_updates is enabled, use 12 hours.
-		if gym.Updated > now-GetUpdateThreshold(900) {
+		if gym.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
 			// if a gym is unchanged and was seen recently, skip saving
-			return
+			return false
 		}
 	}
-	gym.SetUpdated(now)
+	gym.SetUpdatedMs(nowMs)
 
 	// Capture isNewRecord before state changes
 	isNewRecord := gym.IsNewRecord()
@@ -361,6 +368,7 @@ func saveGymRecord(ctx context.Context, db db.DbDetails, gym *Gym) {
 		gym.newRecord = false
 	}
 	gym.ClearDirty()
+	return true
 }
 
 // gymWriteDB performs the actual database INSERT/UPDATE for a Gym
@@ -369,8 +377,8 @@ func gymWriteDB(db db.DbDetails, gym *Gym, isNewRecord bool) error {
 	ctx := context.Background()
 
 	if isNewRecord {
-		res, err := db.GeneralDb.NamedExecContext(ctx, "INSERT INTO gym (id,lat,lon,name,url,last_modified_timestamp,raid_end_timestamp,raid_spawn_timestamp,raid_battle_timestamp,updated,raid_pokemon_id,guarding_pokemon_id,guarding_pokemon_display,available_slots,team_id,raid_level,enabled,ex_raid_eligible,in_battle,raid_pokemon_move_1,raid_pokemon_move_2,raid_pokemon_form,raid_pokemon_alignment,raid_pokemon_cp,raid_is_exclusive,cell_id,deleted,total_cp,first_seen_timestamp,raid_pokemon_gender,sponsor_id,partner_id,raid_pokemon_costume,raid_pokemon_evolution,ar_scan_eligible,power_up_level,power_up_points,power_up_end_timestamp,description, defenders, rsvps) "+
-			"VALUES (:id,:lat,:lon,:name,:url,UNIX_TIMESTAMP(),:raid_end_timestamp,:raid_spawn_timestamp,:raid_battle_timestamp,:updated,:raid_pokemon_id,:guarding_pokemon_id,:guarding_pokemon_display,:available_slots,:team_id,:raid_level,:enabled,:ex_raid_eligible,:in_battle,:raid_pokemon_move_1,:raid_pokemon_move_2,:raid_pokemon_form,:raid_pokemon_alignment,:raid_pokemon_cp,:raid_is_exclusive,:cell_id,0,:total_cp,UNIX_TIMESTAMP(),:raid_pokemon_gender,:sponsor_id,:partner_id,:raid_pokemon_costume,:raid_pokemon_evolution,:ar_scan_eligible,:power_up_level,:power_up_points,:power_up_end_timestamp,:description, :defenders, :rsvps)", gym)
+		res, err := db.GeneralDb.NamedExecContext(ctx, "INSERT INTO gym (id,lat,lon,name,url,last_modified_timestamp,raid_end_timestamp,raid_spawn_timestamp,raid_battle_timestamp,updated_ms,raid_pokemon_id,guarding_pokemon_id,guarding_pokemon_display,available_slots,team_id,raid_level,enabled,ex_raid_eligible,in_battle,raid_pokemon_move_1,raid_pokemon_move_2,raid_pokemon_form,raid_pokemon_alignment,raid_pokemon_cp,raid_is_exclusive,cell_id,deleted,total_cp,first_seen_timestamp,raid_pokemon_gender,sponsor_id,partner_id,raid_pokemon_costume,raid_pokemon_evolution,ar_scan_eligible,power_up_level,power_up_points,power_up_end_timestamp,description, defenders, rsvps) "+
+			"VALUES (:id,:lat,:lon,:name,:url,UNIX_TIMESTAMP(),:raid_end_timestamp,:raid_spawn_timestamp,:raid_battle_timestamp,:updated_ms,:raid_pokemon_id,:guarding_pokemon_id,:guarding_pokemon_display,:available_slots,:team_id,:raid_level,:enabled,:ex_raid_eligible,:in_battle,:raid_pokemon_move_1,:raid_pokemon_move_2,:raid_pokemon_form,:raid_pokemon_alignment,:raid_pokemon_cp,:raid_is_exclusive,:cell_id,0,:total_cp,UNIX_TIMESTAMP(),:raid_pokemon_gender,:sponsor_id,:partner_id,:raid_pokemon_costume,:raid_pokemon_evolution,:ar_scan_eligible,:power_up_level,:power_up_points,:power_up_end_timestamp,:description, :defenders, :rsvps)", gym)
 
 		statsCollector.IncDbQuery("insert gym", err)
 		if err != nil {
@@ -388,7 +396,7 @@ func gymWriteDB(db db.DbDetails, gym *Gym, isNewRecord bool) error {
 			"raid_end_timestamp = :raid_end_timestamp, "+
 			"raid_spawn_timestamp = :raid_spawn_timestamp, "+
 			"raid_battle_timestamp = :raid_battle_timestamp, "+
-			"updated = :updated, "+
+			"updated_ms = :updated_ms, "+
 			"raid_pokemon_id = :raid_pokemon_id, "+
 			"guarding_pokemon_id = :guarding_pokemon_id, "+
 			"guarding_pokemon_display = :guarding_pokemon_display, "+

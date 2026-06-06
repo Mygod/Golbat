@@ -27,7 +27,7 @@ const wildPokemonDelay = 30 * time.Second
 // Used by both single-row and bulk load queries to keep them in sync.
 const pokemonSelectColumns = `id, pokemon_id, lat, lon, spawn_id, expire_timestamp, atk_iv, def_iv, sta_iv,
 	golbat_internal, iv, move_1, move_2, gender, form, cp, level, strong, weather, costume, weight, height, size,
-	display_pokemon_id, display_pokemon_form, is_ditto, pokestop_id, updated, first_seen_timestamp, changed, cell_id,
+	display_pokemon_id, display_pokemon_form, is_ditto, pokestop_id, updated_ms, first_seen_timestamp, changed, cell_id,
 	expire_timestamp_verified, shiny, username, pvp, is_event, seen_type`
 
 // peekPokemonRecordReadOnly acquires lock, does NOT take snapshot.
@@ -140,15 +140,23 @@ func getOrCreatePokemonRecord(ctx context.Context, db db.DbDetails, encounterId 
 }
 
 func savePokemonRecordAsAtTime(ctx context.Context, db db.DbDetails, pokemon *Pokemon, isEncounter, writeDB, webhook bool, now int64) {
+	savePokemonRecordWithFreshness(ctx, db, pokemon, isEncounter, writeDB, webhook, FallbackFreshness(now*1000))
+}
+
+func savePokemonRecordWithFreshness(ctx context.Context, db db.DbDetails, pokemon *Pokemon, isEncounter, writeDB, webhook bool, freshness Freshness) bool {
+	if freshness.IsStaleFor(pokemon.UpdatedMs.ValueOrZero(), pokemon.isNewRecord()) {
+		return false
+	}
+	now := freshness.Unix()
 	if !pokemon.newRecord && !pokemon.IsDirty() {
-		return
+		return false
 	}
 
 	if pokemon.FirstSeenTimestamp == 0 {
 		pokemon.FirstSeenTimestamp = now
 	}
 
-	pokemon.SetUpdated(null.IntFrom(now))
+	pokemon.SetUpdatedMs(null.IntFrom(freshness.TimestampMs()))
 	if pokemon.isNewRecord() || pokemon.oldValues.PokemonId != pokemon.PokemonId || pokemon.oldValues.Cp != pokemon.Cp {
 		pokemon.SetChanged(now)
 	}
@@ -272,6 +280,7 @@ func savePokemonRecordAsAtTime(ctx context.Context, db db.DbDetails, pokemon *Po
 	if db.UsePokemonCache {
 		pokemonCache.Set(uint64(pokemon.Id), pokemon, pokemon.remainingDuration(now))
 	}
+	return true
 }
 
 // pokemonWriteDB performs the actual database INSERT or UPDATE for a Pokemon
@@ -288,11 +297,11 @@ func pokemonWriteDB(db db.DbDetails, pokemon *Pokemon, isNewRecord bool) error {
 		_, err := db.PokemonDb.NamedExecContext(ctx, fmt.Sprintf("INSERT INTO pokemon (id, pokemon_id, lat, lon,"+
 			"spawn_id, expire_timestamp, atk_iv, def_iv, sta_iv, golbat_internal, iv, move_1, move_2,"+
 			"gender, form, cp, level, strong, weather, costume, weight, height, size,"+
-			"display_pokemon_id, display_pokemon_form, is_ditto, pokestop_id, updated, first_seen_timestamp, changed, cell_id,"+
+			"display_pokemon_id, display_pokemon_form, is_ditto, pokestop_id, updated_ms, first_seen_timestamp, changed, cell_id,"+
 			"expire_timestamp_verified, shiny, username, %s is_event, seen_type) "+
 			"VALUES (\"%d\", :pokemon_id, :lat, :lon, :spawn_id, :expire_timestamp, :atk_iv, :def_iv, :sta_iv,"+
 			":golbat_internal, :iv, :move_1, :move_2, :gender, :form, :cp, :level, :strong, :weather, :costume,"+
-			":weight, :height, :size, :display_pokemon_id, :display_pokemon_form, :is_ditto, :pokestop_id, :updated,"+
+			":weight, :height, :size, :display_pokemon_id, :display_pokemon_form, :is_ditto, :pokestop_id, :updated_ms,"+
 			":first_seen_timestamp, :changed, :cell_id, :expire_timestamp_verified, :shiny, :username, %s :is_event,"+
 			":seen_type)", pvpField, pokemon.Id, pvpValue), pokemon)
 
@@ -317,7 +326,7 @@ func pokemonWriteDB(db db.DbDetails, pokemon *Pokemon, isNewRecord bool) error {
 			"height = :height, "+
 			"size = :size, "+
 			"expire_timestamp = :expire_timestamp, "+
-			"updated = :updated, "+
+			"updated_ms = :updated_ms, "+
 			"pokemon_id = :pokemon_id, "+
 			"move_1 = :move_1, "+
 			"move_2 = :move_2, "+
@@ -438,7 +447,7 @@ func createPokemonWebhooks(ctx context.Context, db db.DbDetails, pokemon *Pokemo
 			DisappearTime:         pokemon.ExpireTimestamp.ValueOrZero(),
 			DisappearTimeVerified: pokemon.ExpireTimestampVerified,
 			FirstSeen:             pokemon.FirstSeenTimestamp,
-			LastModifiedTime:      pokemon.Updated,
+			LastModifiedTime:      updatedMsToNullSeconds(pokemon.UpdatedMs),
 			Gender:                pokemon.Gender,
 			Cp:                    pokemon.Cp,
 			Form:                  pokemon.Form,

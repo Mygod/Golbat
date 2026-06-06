@@ -27,8 +27,14 @@ type RawFortData struct {
 }
 
 type RawStationData struct {
-	Cell uint64
-	Data *pogo.StationProto
+	Cell      uint64
+	Data      *pogo.StationProto
+	Timestamp int64
+}
+
+type RawS2CellData struct {
+	Cell      uint64
+	Timestamp int64
 }
 
 type RawWildPokemonData struct {

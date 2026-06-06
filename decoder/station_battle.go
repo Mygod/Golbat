@@ -35,7 +35,7 @@ type StationBattleData struct {
 	BattlePokemonMove2        null.Int   `db:"battle_pokemon_move_2"`
 	BattlePokemonStamina      null.Int   `db:"battle_pokemon_stamina"`
 	BattlePokemonCpMultiplier null.Float `db:"battle_pokemon_cp_multiplier"`
-	Updated                   int64      `db:"updated"`
+	UpdatedMs                 int64      `db:"updated_ms"`
 }
 
 type FortLookupStationBattle struct {
@@ -81,24 +81,24 @@ type stationBattleProjection struct {
 const stationBattleSelectColumns = `bread_battle_seed, station_id, battle_level, battle_start, battle_end,
 	battle_pokemon_id, battle_pokemon_form, battle_pokemon_costume, battle_pokemon_gender,
 	battle_pokemon_alignment, battle_pokemon_bread_mode, battle_pokemon_move_1, battle_pokemon_move_2,
-	battle_pokemon_stamina, battle_pokemon_cp_multiplier, updated`
+	battle_pokemon_stamina, battle_pokemon_cp_multiplier, updated_ms`
 
 const stationBattleSelectColumnsQualified = `sb.bread_battle_seed, sb.station_id, sb.battle_level, sb.battle_start, sb.battle_end,
 	sb.battle_pokemon_id, sb.battle_pokemon_form, sb.battle_pokemon_costume, sb.battle_pokemon_gender,
 	sb.battle_pokemon_alignment, sb.battle_pokemon_bread_mode, sb.battle_pokemon_move_1, sb.battle_pokemon_move_2,
-	sb.battle_pokemon_stamina, sb.battle_pokemon_cp_multiplier, sb.updated`
+	sb.battle_pokemon_stamina, sb.battle_pokemon_cp_multiplier, sb.updated_ms`
 
 const stationBattleBatchUpsertQuery = `
 INSERT INTO station_battle (
 	bread_battle_seed, station_id, battle_level, battle_start, battle_end,
 	battle_pokemon_id, battle_pokemon_form, battle_pokemon_costume, battle_pokemon_gender,
 	battle_pokemon_alignment, battle_pokemon_bread_mode, battle_pokemon_move_1, battle_pokemon_move_2,
-	battle_pokemon_stamina, battle_pokemon_cp_multiplier, updated
+	battle_pokemon_stamina, battle_pokemon_cp_multiplier, updated_ms
 ) VALUES (
 	:bread_battle_seed, :station_id, :battle_level, :battle_start, :battle_end,
 	:battle_pokemon_id, :battle_pokemon_form, :battle_pokemon_costume, :battle_pokemon_gender,
 	:battle_pokemon_alignment, :battle_pokemon_bread_mode, :battle_pokemon_move_1, :battle_pokemon_move_2,
-	:battle_pokemon_stamina, :battle_pokemon_cp_multiplier, :updated
+	:battle_pokemon_stamina, :battle_pokemon_cp_multiplier, :updated_ms
 )
 ON DUPLICATE KEY UPDATE
 	station_id = VALUES(station_id),
@@ -115,7 +115,7 @@ ON DUPLICATE KEY UPDATE
 	battle_pokemon_move_2 = VALUES(battle_pokemon_move_2),
 	battle_pokemon_stamina = VALUES(battle_pokemon_stamina),
 	battle_pokemon_cp_multiplier = VALUES(battle_pokemon_cp_multiplier),
-	updated = VALUES(updated)
+	updated_ms = VALUES(updated_ms)
 `
 
 var (
@@ -158,21 +158,23 @@ func hasLoadedStationBattles(stationId string) bool {
 	return ok && state.Loaded
 }
 
-func syncStationBattlesFromProto(station *Station, battleDetail *pogo.BreadBattleDetailProto) {
+func syncStationBattlesFromProto(station *Station, battleDetail *pogo.BreadBattleDetailProto, freshness Freshness) {
 	if station == nil {
 		return
 	}
-	now := time.Now().Unix()
+	now := freshness.Unix()
+	changed := false
 	if battleDetail == nil {
-		storeStationBattles(station.Id, nil)
-		return
+		changed = clearCachedStationBattles(station.Id, freshness, now)
+	} else if battle := stationBattleFromProto(station.Id, battleDetail, freshness.TimestampMs()); battle != nil {
+		changed = upsertCachedStationBattleWithFreshness(*battle, now, freshness)
 	}
-	if battle := stationBattleFromProto(station.Id, battleDetail, now); battle != nil {
-		upsertCachedStationBattle(*battle, now)
+	if changed {
+		station.internalDirty = true
 	}
 }
 
-func stationBattleFromProto(stationId string, battleDetail *pogo.BreadBattleDetailProto, updated int64) *StationBattleData {
+func stationBattleFromProto(stationId string, battleDetail *pogo.BreadBattleDetailProto, updatedMs int64) *StationBattleData {
 	if stationId == "" || battleDetail == nil {
 		return nil
 	}
@@ -182,7 +184,7 @@ func stationBattleFromProto(stationId string, battleDetail *pogo.BreadBattleDeta
 		BattleLevel:     int16(battleDetail.GetBattleLevel()),
 		BattleStart:     int64(battleDetail.GetBattleWindowStartMs() / 1000),
 		BattleEnd:       int64(battleDetail.GetBattleWindowEndMs() / 1000),
-		Updated:         updated,
+		UpdatedMs:       updatedMs,
 	}
 	if pokemon := battleDetail.GetBattlePokemon(); pokemon != nil {
 		battle.BattlePokemonId = null.IntFrom(int64(pokemon.GetPokemonId()))
@@ -226,11 +228,7 @@ func stationBattlesEqual(a []StationBattleData, b []StationBattleData) bool {
 		return false
 	}
 	for i := range a {
-		left := a[i]
-		right := b[i]
-		left.Updated = 0
-		right.Updated = 0
-		if left != right {
+		if a[i] != b[i] {
 			return false
 		}
 	}
@@ -306,8 +304,12 @@ func boolAsInt64(v bool) int64 {
 }
 
 func upsertCachedStationBattle(battle StationBattleData, now int64) bool {
+	return upsertCachedStationBattleWithFreshness(battle, now, FallbackFreshness(battle.UpdatedMs))
+}
+
+func upsertCachedStationBattleWithFreshness(battle StationBattleData, now int64, freshness Freshness) bool {
 	state, _ := stationBattleCache.Load(battle.StationId)
-	next := mergeStationBattles(state.Battles, battle, now)
+	next := mergeStationBattles(state.Battles, battle, now, freshness)
 	if state.Loaded && stationBattlesEqual(state.Battles, next) {
 		return false
 	}
@@ -315,19 +317,57 @@ func upsertCachedStationBattle(battle StationBattleData, now int64) bool {
 	return true
 }
 
-func mergeStationBattles(existing []StationBattleData, observed StationBattleData, now int64) []StationBattleData {
+func mergeStationBattles(existing []StationBattleData, observed StationBattleData, now int64, freshness Freshness) []StationBattleData {
 	next := make([]StationBattleData, 0, len(existing)+1)
-	if observed.BattleEnd > now {
-		next = append(next, observed)
-	}
+	keepObserved := observed.BattleEnd > now
 	for _, cached := range existing {
-		if cached.BreadBattleSeed == observed.BreadBattleSeed || cached.BattleEnd <= now || cached.BattleEnd <= observed.BattleEnd {
+		if cached.BattleEnd <= now {
+			continue
+		}
+		if cached.BreadBattleSeed == observed.BreadBattleSeed {
+			if freshness.IsServer() && observed.UpdatedMs < cached.UpdatedMs {
+				next = append(next, cached)
+				keepObserved = false
+			}
+			continue
+		}
+		if cached.BattleEnd <= observed.BattleEnd && (!freshness.IsServer() || cached.UpdatedMs <= observed.UpdatedMs) {
 			continue
 		}
 		next = append(next, cached)
 	}
+	if keepObserved {
+		next = append(next, observed)
+	}
 	sortStationBattlesByEnd(next)
 	return next
+}
+
+func clearCachedStationBattles(stationId string, freshness Freshness, now int64) bool {
+	state, ok := stationBattleCache.Load(stationId)
+	if !ok {
+		storeStationBattles(stationId, nil)
+		return true
+	}
+	if !freshness.IsServer() {
+		if state.Loaded && len(state.Battles) == 0 {
+			return false
+		}
+		storeStationBattles(stationId, nil)
+		return true
+	}
+
+	next := make([]StationBattleData, 0, len(state.Battles))
+	for _, cached := range state.Battles {
+		if cached.BattleEnd > now && cached.UpdatedMs > freshness.TimestampMs() {
+			next = append(next, cached)
+		}
+	}
+	if state.Loaded && stationBattlesEqual(state.Battles, next) {
+		return false
+	}
+	storeStationBattles(stationId, next)
+	return true
 }
 
 // getKnownStationBattles returns the non-expired battle list already loaded for a station.

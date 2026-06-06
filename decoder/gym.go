@@ -20,7 +20,7 @@ type GymData struct {
 	RaidEndTimestamp       null.Int    `db:"raid_end_timestamp"`
 	RaidSpawnTimestamp     null.Int    `db:"raid_spawn_timestamp"`
 	RaidBattleTimestamp    null.Int    `db:"raid_battle_timestamp"`
-	Updated                int64       `db:"updated"`
+	UpdatedMs              int64       `db:"updated_ms"`
 	RaidPokemonId          null.Int    `db:"raid_pokemon_id"`
 	GuardingPokemonId      null.Int    `db:"guarding_pokemon_id"`
 	GuardingPokemonDisplay null.String `db:"guarding_pokemon_display"`
@@ -576,12 +576,12 @@ func (gym *Gym) updateRaidLobby(playerCount int32, joinEndMs int64) {
 	gym.SetRaidLobbyEndMs(null.IntFrom(joinEndMs))
 }
 
-func (gym *Gym) SetUpdated(v int64) {
-	if gym.Updated != v {
+func (gym *Gym) SetUpdatedMs(v int64) {
+	if gym.UpdatedMs != v {
 		if dbDebugEnabled {
-			gym.changedFields = append(gym.changedFields, fmt.Sprintf("Updated:%d->%d", gym.Updated, v))
+			gym.changedFields = append(gym.changedFields, fmt.Sprintf("UpdatedMs:%d->%d", gym.UpdatedMs, v))
 		}
-		gym.Updated = v
+		gym.UpdatedMs = v
 		gym.dirty = true
 	}
 }

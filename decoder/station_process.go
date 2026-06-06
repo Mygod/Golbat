@@ -10,7 +10,7 @@ import (
 	"golbat/pogo"
 )
 
-func ResetStationedPokemonWithStationDetailsNotFound(ctx context.Context, db db.DbDetails, request *pogo.GetStationedPokemonDetailsProto) string {
+func ResetStationedPokemonWithStationDetailsNotFound(ctx context.Context, db db.DbDetails, request *pogo.GetStationedPokemonDetailsProto, freshness Freshness) string {
 	stationId := request.StationId
 
 	station, unlock, err := getStationRecordForUpdate(ctx, db, stationId, "ResetStationedPokemon")
@@ -26,11 +26,11 @@ func ResetStationedPokemonWithStationDetailsNotFound(ctx context.Context, db db.
 	defer unlock()
 
 	station.resetStationedPokemonFromStationDetailsNotFound()
-	saveStationRecord(ctx, db, station)
+	saveStationRecordWithFreshness(ctx, db, station, freshness)
 	return fmt.Sprintf("StationedPokemonDetails %s", stationId)
 }
 
-func UpdateStationWithStationDetails(ctx context.Context, db db.DbDetails, request *pogo.GetStationedPokemonDetailsProto, stationDetails *pogo.GetStationedPokemonDetailsOutProto) string {
+func UpdateStationWithStationDetails(ctx context.Context, db db.DbDetails, request *pogo.GetStationedPokemonDetailsProto, stationDetails *pogo.GetStationedPokemonDetailsOutProto, freshness Freshness) string {
 	stationId := request.StationId
 
 	station, unlock, err := getStationRecordForUpdate(ctx, db, stationId, "UpdateStationWithDetails")
@@ -46,6 +46,6 @@ func UpdateStationWithStationDetails(ctx context.Context, db db.DbDetails, reque
 	defer unlock()
 
 	station.updateFromGetStationedPokemonDetailsOutProto(stationDetails)
-	saveStationRecord(ctx, db, station)
+	saveStationRecordWithFreshness(ctx, db, station, freshness)
 	return fmt.Sprintf("StationedPokemonDetails %s", stationId)
 }

@@ -18,7 +18,7 @@ import (
 // stationSelectColumns defines the columns for station queries.
 // Used by both single-row and bulk load queries to keep them in sync.
 const stationSelectColumns = `id, lat, lon, name, cell_id, start_time, end_time, cooldown_complete,
-	is_battle_available, is_inactive, updated, battle_level, battle_start, battle_end,
+	is_battle_available, is_inactive, updated_ms, battle_level, battle_start, battle_end,
 	battle_pokemon_id, battle_pokemon_form, battle_pokemon_costume, battle_pokemon_gender,
 	battle_pokemon_alignment, battle_pokemon_bread_mode, battle_pokemon_move_1, battle_pokemon_move_2,
 	battle_pokemon_stamina, battle_pokemon_cp_multiplier, total_stationed_pokemon, total_stationed_gmax,
@@ -184,24 +184,40 @@ func getOrCreateStationRecord(ctx context.Context, db db.DbDetails, stationId st
 }
 
 func saveStationRecord(ctx context.Context, db db.DbDetails, station *Station) {
-	now := time.Now().Unix()
+	saveStationRecordWithFreshness(ctx, db, station, FallbackFreshness(0))
+}
+
+func saveStationRecordWithFreshness(ctx context.Context, db db.DbDetails, station *Station, freshness Freshness) bool {
+	nowMs := freshness.TimestampMs()
+	now := freshness.Unix()
 	battles := getKnownStationBattles(station.Id, now)
 	battleSnapshot := snapshotStationBattles(battles)
-	applyTopStationBattleToStation(station, battles)
 	battleListChanged := station.oldValues.BattleSnapshot != battleSnapshot
+	battleRowsChanged := station.IsInternalDirty() || battleListChanged
 	isNewRecord := station.IsNewRecord()
-	stationNeedsWrite := station.IsDirty() || isNewRecord || battleListChanged
+	stationFreshnessStale := freshness.IsStaleFor(station.UpdatedMs, isNewRecord)
+	stationNeedsWrite := false
 
-	// Skip save if not dirty and was updated recently (15-min debounce)
-	if !stationNeedsWrite {
-		if station.Updated > now-GetUpdateThreshold(900) {
-			return
+	if !stationFreshnessStale {
+		applyTopStationBattleToStation(station, battles)
+		stationNeedsWrite = station.IsDirty() || isNewRecord || battleListChanged
+
+		// Skip save if not dirty and was updated recently (15-min debounce)
+		if !stationNeedsWrite {
+			if station.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
+				stationNeedsWrite = false
+			} else {
+				stationNeedsWrite = true
+			}
 		}
-		stationNeedsWrite = true
+	}
+
+	if !stationNeedsWrite && !battleRowsChanged {
+		return false
 	}
 
 	if stationNeedsWrite {
-		station.SetUpdated(now)
+		station.SetUpdatedMs(nowMs)
 
 		// Debug logging before queueing
 		if dbDebugEnabled {
@@ -220,7 +236,7 @@ func saveStationRecord(ctx context.Context, db db.DbDetails, station *Station) {
 			_ = stationWriteDB(db, station, isNewRecord)
 		}
 	}
-	if battleListChanged {
+	if battleRowsChanged {
 		battleWrite := stationBattleWrite{StationId: station.Id, Battles: battles}
 		if stationBattleQueue != nil {
 			stationBattleQueue.Enqueue(battleWrite, false, 0)
@@ -232,7 +248,7 @@ func saveStationRecord(ctx context.Context, db db.DbDetails, station *Station) {
 	if stationNeedsWrite && dbDebugEnabled {
 		station.changedFields = station.changedFields[:0]
 	}
-	if stationNeedsWrite {
+	if stationNeedsWrite || battleRowsChanged {
 		station.ClearDirty()
 	}
 	createStationWebhooksWithBattles(station, battles, battleSnapshot, isNewRecord, now)
@@ -244,6 +260,7 @@ func saveStationRecord(ctx context.Context, db db.DbDetails, station *Station) {
 		genericUpdateFort(station.Id, station.Lat, station.Lon, false)
 		updateStationLookupWithBattles(station, battles)
 	}
+	return true
 }
 
 // stationWriteDB performs the actual database INSERT/UPDATE for a Station
@@ -254,8 +271,8 @@ func stationWriteDB(db db.DbDetails, station *Station, isNewRecord bool) error {
 	if isNewRecord {
 		res, err := db.GeneralDb.NamedExecContext(ctx,
 			`
-			INSERT INTO station (id, lat, lon, name, cell_id, start_time, end_time, cooldown_complete, is_battle_available, is_inactive, updated, battle_level, battle_start, battle_end, battle_pokemon_id, battle_pokemon_form, battle_pokemon_costume, battle_pokemon_gender, battle_pokemon_alignment, battle_pokemon_bread_mode, battle_pokemon_move_1, battle_pokemon_move_2, battle_pokemon_stamina, battle_pokemon_cp_multiplier, total_stationed_pokemon, total_stationed_gmax, stationed_pokemon)
-			VALUES (:id,:lat,:lon,:name,:cell_id,:start_time,:end_time,:cooldown_complete,:is_battle_available,:is_inactive,:updated,:battle_level,:battle_start,:battle_end,:battle_pokemon_id,:battle_pokemon_form,:battle_pokemon_costume,:battle_pokemon_gender,:battle_pokemon_alignment,:battle_pokemon_bread_mode,:battle_pokemon_move_1,:battle_pokemon_move_2,:battle_pokemon_stamina,:battle_pokemon_cp_multiplier,:total_stationed_pokemon,:total_stationed_gmax,:stationed_pokemon)
+			INSERT INTO station (id, lat, lon, name, cell_id, start_time, end_time, cooldown_complete, is_battle_available, is_inactive, updated_ms, battle_level, battle_start, battle_end, battle_pokemon_id, battle_pokemon_form, battle_pokemon_costume, battle_pokemon_gender, battle_pokemon_alignment, battle_pokemon_bread_mode, battle_pokemon_move_1, battle_pokemon_move_2, battle_pokemon_stamina, battle_pokemon_cp_multiplier, total_stationed_pokemon, total_stationed_gmax, stationed_pokemon)
+			VALUES (:id,:lat,:lon,:name,:cell_id,:start_time,:end_time,:cooldown_complete,:is_battle_available,:is_inactive,:updated_ms,:battle_level,:battle_start,:battle_end,:battle_pokemon_id,:battle_pokemon_form,:battle_pokemon_costume,:battle_pokemon_gender,:battle_pokemon_alignment,:battle_pokemon_bread_mode,:battle_pokemon_move_1,:battle_pokemon_move_2,:battle_pokemon_stamina,:battle_pokemon_cp_multiplier,:total_stationed_pokemon,:total_stationed_gmax,:stationed_pokemon)
 			`, station)
 
 		statsCollector.IncDbQuery("insert station", err)
@@ -277,7 +294,7 @@ func stationWriteDB(db db.DbDetails, station *Station, isNewRecord bool) error {
 			    cooldown_complete = :cooldown_complete,
 			    is_battle_available = :is_battle_available,
 			    is_inactive = :is_inactive,
-			    updated = :updated,
+			    updated_ms = :updated_ms,
 			    battle_level = :battle_level,
 			    battle_start = :battle_start,
 			    battle_end = :battle_end,

@@ -10,7 +10,7 @@ import (
 	"golbat/pogo"
 )
 
-func UpdateGymRecordWithFortDetailsOutProto(ctx context.Context, db db.DbDetails, fort *pogo.FortDetailsOutProto) string {
+func UpdateGymRecordWithFortDetailsOutProto(ctx context.Context, db db.DbDetails, fort *pogo.FortDetailsOutProto, freshness Freshness) string {
 	gym, unlock, err := getOrCreateGymRecord(ctx, db, fort.Id, "UpdateGymFromFortDetails")
 	if err != nil {
 		return err.Error()
@@ -20,26 +20,29 @@ func UpdateGymRecordWithFortDetailsOutProto(ctx context.Context, db db.DbDetails
 	gym.updateGymFromFortProto(fort)
 
 	updateGymGetMapFortCache(gym, true)
-	saveGymRecord(ctx, db, gym)
+	saveGymRecordWithFreshness(ctx, db, gym, freshness)
 
 	return fmt.Sprintf("%s %s", gym.Id, gym.Name.ValueOrZero())
 }
 
-func UpdateGymRecordWithGymInfoProto(ctx context.Context, db db.DbDetails, gymInfo *pogo.GymGetInfoOutProto) string {
+func UpdateGymRecordWithGymInfoProto(ctx context.Context, db db.DbDetails, gymInfo *pogo.GymGetInfoOutProto, freshness Freshness) string {
 	gym, unlock, err := getOrCreateGymRecord(ctx, db, gymInfo.GymStatusAndDefenders.PokemonFortProto.FortId, "UpdateGymFromGymInfo")
 	if err != nil {
 		return err.Error()
 	}
 	defer unlock()
 
-	gym.updateGymFromGymInfoOutProto(gymInfo)
+	if freshness.IsStaleFor(gym.UpdatedMs, gym.IsNewRecord()) {
+		return fmt.Sprintf("%s stale GymInfo", gym.Id)
+	}
+	gym.updateGymFromGymInfoOutProto(gymInfo, freshness.TimestampMs())
 
 	updateGymGetMapFortCache(gym, true)
-	saveGymRecord(ctx, db, gym)
+	saveGymRecordWithFreshness(ctx, db, gym, freshness)
 	return fmt.Sprintf("%s %s", gym.Id, gym.Name.ValueOrZero())
 }
 
-func UpdateGymRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails, mapFort *pogo.GetMapFortsOutProto_FortProto) (bool, string) {
+func UpdateGymRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails, mapFort *pogo.GetMapFortsOutProto_FortProto, freshness Freshness) (bool, string) {
 	gym, unlock, err := getGymRecordForUpdate(ctx, db, mapFort.Id, "UpdateGymFromGetMapForts")
 	if err != nil {
 		return false, err.Error()
@@ -52,11 +55,11 @@ func UpdateGymRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails
 	defer unlock()
 
 	gym.updateGymFromGetMapFortsOutProto(mapFort, false)
-	saveGymRecord(ctx, db, gym)
+	saveGymRecordWithFreshness(ctx, db, gym, freshness)
 	return true, fmt.Sprintf("%s %s", gym.Id, gym.Name.ValueOrZero())
 }
 
-func UpdateGymRecordWithRsvpProto(ctx context.Context, db db.DbDetails, req *pogo.RaidDetails, resp *pogo.GetEventRsvpsOutProto) string {
+func UpdateGymRecordWithRsvpProto(ctx context.Context, db db.DbDetails, req *pogo.RaidDetails, resp *pogo.GetEventRsvpsOutProto, freshness Freshness) string {
 	gym, unlock, err := getGymRecordForUpdate(ctx, db, req.FortId, "UpdateGymWithRsvp")
 	if err != nil {
 		return err.Error()
@@ -70,12 +73,12 @@ func UpdateGymRecordWithRsvpProto(ctx context.Context, db db.DbDetails, req *pog
 
 	gym.updateGymFromRsvpProto(resp)
 
-	saveGymRecord(ctx, db, gym)
+	saveGymRecordWithFreshness(ctx, db, gym, freshness)
 
 	return fmt.Sprintf("%s %s", gym.Id, gym.Name.ValueOrZero())
 }
 
-func ClearGymRsvp(ctx context.Context, db db.DbDetails, fortId string) string {
+func ClearGymRsvp(ctx context.Context, db db.DbDetails, fortId string, freshness Freshness) string {
 	gym, unlock, err := getGymRecordForUpdate(ctx, db, fortId, "ClearGymRsvp")
 	if err != nil {
 		return err.Error()
@@ -90,7 +93,7 @@ func ClearGymRsvp(ctx context.Context, db db.DbDetails, fortId string) string {
 	if gym.Rsvps.Valid {
 		gym.SetRsvps(null.NewString("", false))
 
-		saveGymRecord(ctx, db, gym)
+		saveGymRecordWithFreshness(ctx, db, gym, freshness)
 	}
 
 	return fmt.Sprintf("%s %s", gym.Id, gym.Name.ValueOrZero())

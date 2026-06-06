@@ -10,7 +10,7 @@ import (
 	"golbat/pogo"
 )
 
-func UpdateIncidentLineup(ctx context.Context, db db.DbDetails, protoReq *pogo.OpenInvasionCombatSessionProto, protoRes *pogo.OpenInvasionCombatSessionOutProto) string {
+func UpdateIncidentLineup(ctx context.Context, db db.DbDetails, protoReq *pogo.OpenInvasionCombatSessionProto, protoRes *pogo.OpenInvasionCombatSessionOutProto, freshness Freshness) string {
 	incident, unlock, err := getOrCreateIncidentRecord(ctx, db, protoReq.IncidentLookup.IncidentId, protoReq.IncidentLookup.FortId, "UpdateIncidentWithConfirmation")
 	if err != nil {
 		return fmt.Sprintf("getOrCreateIncidentRecord: %s", err)
@@ -20,9 +20,12 @@ func UpdateIncidentLineup(ctx context.Context, db db.DbDetails, protoReq *pogo.O
 	if incident.newRecord {
 		log.Debugf("Updating lineup before it was saved: %s", protoReq.IncidentLookup.IncidentId)
 	}
+	if freshness.IsStaleFor(incident.UpdatedMs, incident.IsNewRecord()) {
+		return ""
+	}
 	incident.updateFromOpenInvasionCombatSessionOut(protoRes)
 
-	saveIncidentRecord(ctx, db, incident)
+	saveIncidentRecordWithFreshness(ctx, db, incident, freshness)
 	return ""
 }
 
@@ -34,11 +37,11 @@ func UpdateIncidentLineupFromBattleState(ctx context.Context, db db.DbDetails, f
 	defer unlock()
 
 	incident.updateFromBattleState(out)
-	saveIncidentRecord(ctx, db, incident)
+	saveIncidentRecordWithFreshness(ctx, db, incident, FallbackFreshness(0))
 	return ""
 }
 
-func ConfirmIncident(ctx context.Context, db db.DbDetails, proto *pogo.StartIncidentOutProto) string {
+func ConfirmIncident(ctx context.Context, db db.DbDetails, proto *pogo.StartIncidentOutProto, freshness Freshness) string {
 	incident, unlock, err := getOrCreateIncidentRecord(ctx, db, proto.Incident.IncidentId, proto.Incident.FortId, "UpdateIncidentFromInvasion")
 	if err != nil {
 		return fmt.Sprintf("getOrCreateIncidentRecord: %s", err)
@@ -50,6 +53,6 @@ func ConfirmIncident(ctx context.Context, db db.DbDetails, proto *pogo.StartInci
 	}
 	incident.updateFromStartIncidentOut(proto)
 
-	saveIncidentRecord(ctx, db, incident)
+	saveIncidentRecordWithFreshness(ctx, db, incident, freshness)
 	return ""
 }

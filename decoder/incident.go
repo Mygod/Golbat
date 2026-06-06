@@ -16,7 +16,7 @@ type IncidentData struct {
 	DisplayType    int16    `db:"display_type"`
 	Style          int16    `db:"style"`
 	Character      int16    `db:"character"`
-	Updated        int64    `db:"updated"`
+	UpdatedMs      int64    `db:"updated_ms"`
 	Confirmed      bool     `db:"confirmed"`
 	Slot1PokemonId null.Int `db:"slot_1_pokemon_id"`
 	Slot1Form      null.Int `db:"slot_1_form"`
@@ -280,12 +280,12 @@ func (incident *Incident) SetSlot3Form(v null.Int) {
 	}
 }
 
-func (incident *Incident) SetUpdated(v int64) {
-	if incident.Updated != v {
+func (incident *Incident) SetUpdatedMs(v int64) {
+	if incident.UpdatedMs != v {
 		if dbDebugEnabled {
-			incident.changedFields = append(incident.changedFields, fmt.Sprintf("Updated:%d->%d", incident.Updated, v))
+			incident.changedFields = append(incident.changedFields, fmt.Sprintf("UpdatedMs:%d->%d", incident.UpdatedMs, v))
 		}
-		incident.Updated = v
+		incident.UpdatedMs = v
 		incident.dirty = true
 	}
 }

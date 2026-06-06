@@ -57,7 +57,7 @@ func buildPokestopResult(stop *Pokestop) ApiPokestopResult {
 		Url:                        stop.Url,
 		LureExpireTimestamp:        stop.LureExpireTimestamp,
 		LastModifiedTimestamp:      stop.LastModifiedTimestamp,
-		Updated:                    stop.Updated,
+		Updated:                    updatedMsToSeconds(stop.UpdatedMs),
 		Enabled:                    stop.Enabled,
 		QuestType:                  stop.QuestType,
 		QuestTimestamp:             stop.QuestTimestamp,

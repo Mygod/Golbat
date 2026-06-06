@@ -80,7 +80,7 @@ func buildApiPokemonResult(pokemon *Pokemon) ApiPokemonResult {
 		Size:                    pokemon.Size,
 		Height:                  pokemon.Height,
 		ExpireTimestamp:         pokemon.ExpireTimestamp,
-		Updated:                 pokemon.Updated,
+		Updated:                 updatedMsToNullSeconds(pokemon.UpdatedMs),
 		PokemonId:               pokemon.PokemonId,
 		Move1:                   pokemon.Move1,
 		Move2:                   pokemon.Move2,

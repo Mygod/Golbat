@@ -34,7 +34,7 @@ type Weather struct {
 	SpecialEffectLevel null.Int  `db:"special_effect_level"`
 	Severity           null.Int  `db:"severity"`
 	WarnWeather        null.Bool `db:"warn_weather"`
-	UpdatedMs          int64     `db:"updated"`
+	UpdatedMs          int64     `db:"updated_ms"`
 
 	dirty     bool `db:"-" json:"-"` // Not persisted - tracks if object needs saving
 	newRecord bool `db:"-" json:"-"` // Not persisted - tracks if this is a new record
@@ -203,11 +203,8 @@ func (weather *Weather) SetWarnWeather(v null.Bool) {
 
 func loadWeatherFromDatabase(ctx context.Context, db db.DbDetails, weatherId int64, weather *Weather) error {
 	err := db.GeneralDb.GetContext(ctx, weather,
-		"SELECT id, latitude, longitude, level, gameplay_condition, wind_direction, cloud_level, rain_level, wind_level, snow_level, fog_level, special_effect_level, severity, warn_weather, updated FROM weather WHERE id = ?", weatherId)
+		"SELECT id, latitude, longitude, level, gameplay_condition, wind_direction, cloud_level, rain_level, wind_level, snow_level, fog_level, special_effect_level, severity, warn_weather, updated_ms FROM weather WHERE id = ?", weatherId)
 	statsCollector.IncDbQuery("select weather", err)
-	if err == nil {
-		weather.UpdatedMs *= 1000
-	}
 	return err
 }
 
@@ -384,11 +381,11 @@ func saveWeatherRecord(ctx context.Context, db db.DbDetails, weather *Weather) {
 		res, err := db.GeneralDb.NamedExecContext(ctx,
 			"INSERT INTO weather ("+
 				"id, latitude, longitude, level, gameplay_condition, wind_direction, cloud_level, rain_level, "+
-				"wind_level, snow_level, fog_level, special_effect_level, severity, warn_weather, updated)"+
+				"wind_level, snow_level, fog_level, special_effect_level, severity, warn_weather, updated_ms)"+
 				"VALUES ("+
 				":id, :latitude, :longitude, :level, :gameplay_condition, :wind_direction, :cloud_level, :rain_level, "+
 				":wind_level, :snow_level, :fog_level, :special_effect_level, :severity, :warn_weather, "+
-				":updated/1000)",
+				":updated_ms)",
 			weather)
 		statsCollector.IncDbQuery("insert weather", err)
 		if err != nil {
@@ -411,7 +408,7 @@ func saveWeatherRecord(ctx context.Context, db db.DbDetails, weather *Weather) {
 			"special_effect_level = :special_effect_level, "+
 			"severity = :severity, "+
 			"warn_weather = :warn_weather, "+
-			"updated = :updated/1000 "+
+			"updated_ms = :updated_ms "+
 			"WHERE id = :id",
 			weather)
 		statsCollector.IncDbQuery("update weather", err)

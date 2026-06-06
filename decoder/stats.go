@@ -295,7 +295,7 @@ func updatePokemonStats(pokemon *Pokemon, areas []geo.AreaName, now int64) {
 				// transition to wild for the first time..
 				populateEncounterCacheVal()
 				encounterCacheVal.FirstEncounter = 0
-				encounterCacheVal.FirstWild = pokemon.Updated.ValueOrZero()
+				encounterCacheVal.FirstWild = updatedMsToSeconds(pokemon.UpdatedMs.ValueOrZero())
 				// This will be put into the cache later.
 			}
 
@@ -309,7 +309,7 @@ func updatePokemonStats(pokemon *Pokemon, areas []geo.AreaName, now int64) {
 			populateEncounterCacheVal()
 			if encounterCacheVal.FirstEncounter == 0 {
 				// This is first encounter
-				encounterCacheVal.FirstEncounter = pokemon.Updated.ValueOrZero()
+				encounterCacheVal.FirstEncounter = updatedMsToSeconds(pokemon.UpdatedMs.ValueOrZero())
 
 				if encounterCacheVal.FirstWild > 0 {
 					timeToEncounter = encounterCacheVal.FirstEncounter - encounterCacheVal.FirstWild
@@ -318,7 +318,7 @@ func updatePokemonStats(pokemon *Pokemon, areas []geo.AreaName, now int64) {
 				monsIvIncr = 1
 
 				if pokemon.ExpireTimestampVerified {
-					tth := pokemon.ExpireTimestamp.ValueOrZero() - pokemon.Updated.ValueOrZero() // relies on Updated being set
+					tth := pokemon.ExpireTimestamp.ValueOrZero() - updatedMsToSeconds(pokemon.UpdatedMs.ValueOrZero()) // relies on UpdatedMs being set
 					bucket = tth / (5 * 60)
 					if bucket > 11 {
 						bucket = 11
@@ -330,7 +330,7 @@ func updatePokemonStats(pokemon *Pokemon, areas []geo.AreaName, now int64) {
 				}
 			} else {
 				if pokemon.ExpireTimestampVerified {
-					tth := pokemon.ExpireTimestamp.ValueOrZero() - pokemon.Updated.ValueOrZero() // relies on Updated being set
+					tth := pokemon.ExpireTimestamp.ValueOrZero() - updatedMsToSeconds(pokemon.UpdatedMs.ValueOrZero()) // relies on UpdatedMs being set
 
 					verifiedReEncounterIncr = 1
 					verifiedReEncSecTotalIncr = tth

@@ -13,7 +13,7 @@ import (
 	"golbat/pogo"
 )
 
-func UpdatePokestopRecordWithFortDetailsOutProto(ctx context.Context, db db.DbDetails, fort *pogo.FortDetailsOutProto) string {
+func UpdatePokestopRecordWithFortDetailsOutProto(ctx context.Context, db db.DbDetails, fort *pogo.FortDetailsOutProto, freshness Freshness) string {
 	pokestop, unlock, err := getOrCreatePokestopRecord(ctx, db, fort.Id, "UpdatePokestopFromFortDetails")
 	if err != nil {
 		log.Printf("Update pokestop %s", err)
@@ -24,11 +24,11 @@ func UpdatePokestopRecordWithFortDetailsOutProto(ctx context.Context, db db.DbDe
 	pokestop.updatePokestopFromFortDetailsProto(fort)
 
 	updatePokestopGetMapFortCache(pokestop)
-	savePokestopRecord(ctx, db, pokestop)
+	savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
 	return fmt.Sprintf("%s %s", fort.Id, fort.Name)
 }
 
-func UpdatePokestopWithQuest(ctx context.Context, db db.DbDetails, quest *pogo.FortSearchOutProto, haveAr bool) string {
+func UpdatePokestopWithQuest(ctx context.Context, db db.DbDetails, quest *pogo.FortSearchOutProto, haveAr bool, freshness Freshness) string {
 	haveArStr := "NoAR"
 	if haveAr {
 		haveArStr = "AR"
@@ -51,7 +51,7 @@ func UpdatePokestopWithQuest(ctx context.Context, db db.DbDetails, quest *pogo.F
 	questTitle := pokestop.updatePokestopFromQuestProto(quest, haveAr)
 
 	updatePokestopGetMapFortCache(pokestop)
-	savePokestopRecord(ctx, db, pokestop)
+	savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
 
 	areas := MatchStatsGeofenceWithCell(pokestop.Lat, pokestop.Lon, uint64(pokestop.CellId.ValueOrZero()))
 	updateQuestStats(pokestop, haveAr, areas)
@@ -78,7 +78,7 @@ func GetQuestStatusWithGeofence(dbDetails db.DbDetails, geofence *geojson.Featur
 	return res
 }
 
-func UpdatePokestopRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails, mapFort *pogo.GetMapFortsOutProto_FortProto) (bool, string) {
+func UpdatePokestopRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails, mapFort *pogo.GetMapFortsOutProto_FortProto, freshness Freshness) (bool, string) {
 	pokestop, unlock, err := getPokestopRecordForUpdate(ctx, db, mapFort.Id, "UpdatePokestopFromGetMapForts")
 	if err != nil {
 		log.Printf("Update pokestop %s", err)
@@ -91,7 +91,7 @@ func UpdatePokestopRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDe
 	defer unlock()
 
 	pokestop.updatePokestopFromGetMapFortsOutProto(mapFort)
-	savePokestopRecord(ctx, db, pokestop)
+	savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
 	return true, fmt.Sprintf("%s %s", mapFort.Id, mapFort.Name)
 }
 
@@ -99,7 +99,7 @@ func GetPokestopPositions(details db.DbDetails, geofence *geojson.Feature) ([]db
 	return db.GetPokestopPositions(details, geofence)
 }
 
-func UpdatePokestopWithContestData(ctx context.Context, db db.DbDetails, request *pogo.GetContestDataProto, contestData *pogo.GetContestDataOutProto) string {
+func UpdatePokestopWithContestData(ctx context.Context, db db.DbDetails, request *pogo.GetContestDataProto, contestData *pogo.GetContestDataOutProto, freshness Freshness) string {
 	if contestData.ContestIncident == nil || len(contestData.ContestIncident.Contests) == 0 {
 		return "No contests found"
 	}
@@ -135,7 +135,7 @@ func UpdatePokestopWithContestData(ctx context.Context, db db.DbDetails, request
 	defer unlock()
 
 	pokestop.updatePokestopFromGetContestDataOutProto(contest)
-	savePokestopRecord(ctx, db, pokestop)
+	savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
 
 	return fmt.Sprintf("Contest %s", fortId)
 }
@@ -144,7 +144,7 @@ func getFortIdFromContest(id string) string {
 	return strings.Split(id, "-")[0]
 }
 
-func UpdatePokestopWithPokemonSizeContestEntry(ctx context.Context, db db.DbDetails, request *pogo.GetPokemonSizeLeaderboardEntryProto, contestData *pogo.GetPokemonSizeLeaderboardEntryOutProto) string {
+func UpdatePokestopWithPokemonSizeContestEntry(ctx context.Context, db db.DbDetails, request *pogo.GetPokemonSizeLeaderboardEntryProto, contestData *pogo.GetPokemonSizeLeaderboardEntryOutProto, freshness Freshness) string {
 	fortId := getFortIdFromContest(request.GetContestId())
 
 	pokestop, unlock, err := getPokestopRecordForUpdate(ctx, db, fortId, "UpdatePokestopWithContestEntry")
@@ -160,7 +160,7 @@ func UpdatePokestopWithPokemonSizeContestEntry(ctx context.Context, db db.DbDeta
 	defer unlock()
 
 	pokestop.updatePokestopFromGetPokemonSizeContestEntryOutProto(contestData)
-	savePokestopRecord(ctx, db, pokestop)
+	savePokestopRecordWithFreshness(ctx, db, pokestop, freshness)
 
 	return fmt.Sprintf("Contest Detail %s", fortId)
 }

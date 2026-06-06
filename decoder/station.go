@@ -20,7 +20,7 @@ type StationData struct {
 	CooldownComplete  int64   `db:"cooldown_complete"`
 	IsBattleAvailable bool    `db:"is_battle_available"`
 	IsInactive        bool    `db:"is_inactive"`
-	Updated           int64   `db:"updated"`
+	UpdatedMs         int64   `db:"updated_ms"`
 
 	BattleLevel               null.Int   `db:"battle_level"`
 	BattleStart               null.Int   `db:"battle_start"`
@@ -368,12 +368,12 @@ func (station *Station) SetStationedPokemon(v null.String) {
 	}
 }
 
-func (station *Station) SetUpdated(v int64) {
-	if station.Updated != v {
+func (station *Station) SetUpdatedMs(v int64) {
+	if station.UpdatedMs != v {
 		if dbDebugEnabled {
-			station.changedFields = append(station.changedFields, fmt.Sprintf("Updated:%d->%d", station.Updated, v))
+			station.changedFields = append(station.changedFields, fmt.Sprintf("UpdatedMs:%d->%d", station.UpdatedMs, v))
 		}
-		station.Updated = v
+		station.UpdatedMs = v
 		station.dirty = true
 	}
 }

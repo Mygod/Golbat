@@ -187,11 +187,11 @@ func getPathFromURL(u string) string {
 	}
 	return strings.TrimPrefix(parsedURL.Path, "/")
 }
-func UpdateFortRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails, mapFort *pogo.GetMapFortsOutProto_FortProto) (bool, string) {
+func UpdateFortRecordWithGetMapFortsOutProto(ctx context.Context, db db.DbDetails, mapFort *pogo.GetMapFortsOutProto_FortProto, freshness Freshness) (bool, string) {
 	// when we miss, we check the gym, if again, we save it in cache for 5 minutes (in gym part)
-	status, output := UpdatePokestopRecordWithGetMapFortsOutProto(ctx, db, mapFort)
+	status, output := UpdatePokestopRecordWithGetMapFortsOutProto(ctx, db, mapFort, freshness)
 	if !status {
-		status, output = UpdateGymRecordWithGetMapFortsOutProto(ctx, db, mapFort)
+		status, output = UpdateGymRecordWithGetMapFortsOutProto(ctx, db, mapFort, freshness)
 	}
 
 	if !status {

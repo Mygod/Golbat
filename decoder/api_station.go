@@ -61,7 +61,7 @@ func BuildStationResult(station *Station) ApiStationResult {
 		StartTime:             station.StartTime,
 		EndTime:               station.EndTime,
 		IsBattleAvailable:     station.IsBattleAvailable,
-		Updated:               station.Updated,
+		Updated:               updatedMsToSeconds(station.UpdatedMs),
 		TotalStationedPokemon: station.TotalStationedPokemon,
 		TotalStationedGmax:    station.TotalStationedGmax,
 		StationedPokemon:      station.StationedPokemon,
