@@ -3,10 +3,14 @@ package decoder
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/guregu/null/v6"
 
+	"golbat/config"
 	"golbat/db"
+	"golbat/pogo"
+	"golbat/stats_collector"
 )
 
 func TestFreshnessStaleSemantics(t *testing.T) {
@@ -126,5 +130,102 @@ func TestFallbackFreshnessAppliesAndAdvancesExistingPokemonTimestamp(t *testing.
 	}
 	if pokemon.Changed != 9 {
 		t.Fatalf("expected fallback save to apply non-watermark timestamps for changed fields, got %d", pokemon.Changed)
+	}
+}
+
+func TestAcceptedNoOpWildPokemonObservationAdvancesWatermark(t *testing.T) {
+	const (
+		encounterId = uint64(900000001)
+		spawnId     = int64(0xabc)
+	)
+
+	previousPokemonMemoryOnly := config.Config.PokemonMemoryOnly
+	previousSender := webhooksSender
+	previousStats := statsCollector
+	config.Config.PokemonMemoryOnly = true
+	webhooksSender = &recordingWebhooksSender{}
+	statsCollector = stats_collector.NewNoopStatsCollector()
+	defer func() {
+		config.Config.PokemonMemoryOnly = previousPokemonMemoryOnly
+		webhooksSender = previousSender
+		statsCollector = previousStats
+		pokemonCache.Delete(encounterId)
+		spawnpointCache.Delete(spawnId)
+	}()
+
+	pokemon := &Pokemon{
+		PokemonData: PokemonData{
+			Id:                      Uint64Str(encounterId),
+			PokemonId:               int16(pogo.HoloPokemonId_BULBASAUR),
+			Lat:                     1.23,
+			Lon:                     4.56,
+			SpawnId:                 null.IntFrom(spawnId),
+			UpdatedMs:               null.IntFrom(1000),
+			Form:                    null.IntFrom(0),
+			Weather:                 null.IntFrom(0),
+			Costume:                 null.IntFrom(0),
+			Gender:                  null.IntFrom(0),
+			SeenType:                null.StringFrom(SeenType_Wild),
+			ExpireTimestamp:         null.IntFrom(3600),
+			ExpireTimestampVerified: true,
+		},
+	}
+	pokemonCache.Set(encounterId, pokemon, time.Hour)
+	spawnpointCache.Set(spawnId, &Spawnpoint{
+		SpawnpointData: SpawnpointData{
+			Id:        spawnId,
+			Lat:       1.23,
+			Lon:       4.56,
+			UpdatedMs: 3000,
+			LastSeen:  3,
+		},
+	}, time.Hour)
+
+	UpdatePokemonBatch(context.Background(), db.DbDetails{}, ScanParameters{ProcessWild: true}, []RawWildPokemonData{{
+		Cell:      1,
+		Timestamp: 3000,
+		Data: &pogo.WildPokemonProto{
+			EncounterId:  encounterId,
+			Latitude:     1.23,
+			Longitude:    4.56,
+			SpawnPointId: "abc",
+			Pokemon: &pogo.PokemonProto{
+				PokemonId: pogo.HoloPokemonId_BULBASAUR,
+				PokemonDisplay: &pogo.PokemonDisplayProto{
+					DisplayId: int64(pogo.HoloPokemonId_BULBASAUR),
+				},
+			},
+		},
+	}}, nil, nil, nil, "scanner")
+
+	if pokemon.UpdatedMs.ValueOrZero() != 3000 {
+		t.Fatalf("expected no-op wild observation to advance watermark, got %d", pokemon.UpdatedMs.ValueOrZero())
+	}
+	if pokemon.IsDirty() {
+		t.Fatal("expected cache-only watermark advancement not to mark pokemon dirty")
+	}
+
+	UpdatePokemonBatch(context.Background(), db.DbDetails{}, ScanParameters{ProcessWild: true}, []RawWildPokemonData{{
+		Cell:      1,
+		Timestamp: 2000,
+		Data: &pogo.WildPokemonProto{
+			EncounterId:  encounterId,
+			Latitude:     1.23,
+			Longitude:    4.56,
+			SpawnPointId: "abc",
+			Pokemon: &pogo.PokemonProto{
+				PokemonId: pogo.HoloPokemonId_IVYSAUR,
+				PokemonDisplay: &pogo.PokemonDisplayProto{
+					DisplayId: int64(pogo.HoloPokemonId_IVYSAUR),
+				},
+			},
+		},
+	}}, nil, nil, nil, "scanner")
+
+	if pokemon.PokemonId != int16(pogo.HoloPokemonId_BULBASAUR) {
+		t.Fatalf("expected stale replay to be rejected, got pokemon id %d", pokemon.PokemonId)
+	}
+	if pokemon.UpdatedMs.ValueOrZero() != 3000 {
+		t.Fatalf("expected stale replay not to regress watermark, got %d", pokemon.UpdatedMs.ValueOrZero())
 	}
 }

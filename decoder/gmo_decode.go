@@ -180,8 +180,8 @@ func UpdatePokemonBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 			updateTime := freshness.Unix()
 			if pokemon.isNewRecord() || pokemon.wildSignificantUpdate(wild.Data, updateTime) {
 				pokemon.updateFromWild(ctx, db, wild.Data, int64(wild.Cell), weatherLookup, wild.Timestamp, username)
-				savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 			}
+			savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 			unlock()
 		}
 	}
@@ -205,8 +205,8 @@ func UpdatePokemonBatch(ctx context.Context, db db.DbDetails, scanParameters Sca
 				updateTime := freshness.Unix()
 				if pokemon.isNewRecord() || pokemon.nearbySignificantUpdate(nearby.Data, updateTime) {
 					pokemon.updateFromNearby(ctx, db, nearby.Data, int64(nearby.Cell), weatherLookup, nearby.Timestamp, username)
-					savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 				}
+				savePokemonRecordWithFreshness(ctx, db, pokemon, false, true, true, freshness)
 
 				unlock()
 			}

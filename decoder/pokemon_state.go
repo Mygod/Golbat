@@ -149,6 +149,9 @@ func savePokemonRecordWithFreshness(ctx context.Context, db db.DbDetails, pokemo
 	}
 	now := freshness.Unix()
 	if !pokemon.newRecord && !pokemon.IsDirty() {
+		if freshness.IsServer() {
+			pokemon.UpdatedMs = null.IntFrom(freshness.TimestampMs())
+		}
 		return false
 	}
 
