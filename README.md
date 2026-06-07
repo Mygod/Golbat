@@ -14,6 +14,8 @@ At this time this is likely to be mostly development discussion.
 
 [go 1.24](https://go.dev/doc/install)
 
+Golbat expects the host clock to be synchronized, for example with NTP, chrony, or systemd-timesyncd. Golbat uses server-sent timestamps from raw game data to order freshness-sensitive updates, and falls back to the local receive time for updates that do not carry a server timestamp. A skewed host clock can make those fallback updates appear too old or too new, which can cause out-of-order freshness decisions.
+
 # Instructions
 
 1. copy `config.toml.example` to `config.toml`
