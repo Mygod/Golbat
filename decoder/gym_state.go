@@ -323,7 +323,9 @@ func saveGymRecordWithFreshness(ctx context.Context, db db.DbDetails, gym *Gym, 
 		}
 		// default debounce is 15 minutes (900s). If reduce_updates is enabled, use 12 hours.
 		if gym.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
-			// if a gym is unchanged and was seen recently, skip saving
+			// If a server observation is accepted but debounced, keep its
+			// in-memory freshness watermark so delayed older GMOs cannot win.
+			gym.UpdatedMs = nowMs
 			return false
 		}
 	}

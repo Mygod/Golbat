@@ -204,7 +204,12 @@ func saveStationRecordWithFreshness(ctx context.Context, db db.DbDetails, statio
 
 		// Skip save if not dirty and was updated recently (15-min debounce)
 		if !stationNeedsWrite {
-			if !freshness.IsServer() || station.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
+			if !freshness.IsServer() {
+				stationNeedsWrite = false
+			} else if station.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
+				// If a server observation is accepted but debounced, keep its
+				// in-memory freshness watermark so delayed older GMOs cannot win.
+				station.UpdatedMs = nowMs
 				stationNeedsWrite = false
 			} else {
 				stationNeedsWrite = true

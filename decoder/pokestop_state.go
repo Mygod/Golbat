@@ -328,7 +328,9 @@ func savePokestopRecordWithFreshness(ctx context.Context, db db.DbDetails, pokes
 		}
 		// default debounce is 15 minutes (900s). If reduce_updates is enabled, use 12 hours.
 		if pokestop.UpdatedMs > nowMs-GetUpdateThreshold(900)*1000 {
-			// if a pokestop is unchanged and was seen recently, skip saving
+			// If a server observation is accepted but debounced, keep its
+			// in-memory freshness watermark so delayed older GMOs cannot win.
+			pokestop.UpdatedMs = nowMs
 			return false
 		}
 	}

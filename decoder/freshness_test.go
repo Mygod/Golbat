@@ -54,6 +54,59 @@ func TestSavePokemonRecordWithFreshnessSkipsStaleServerTimestamp(t *testing.T) {
 	}
 }
 
+func TestDebouncedServerFreshnessAdvancesInMemoryWatermark(t *testing.T) {
+	freshness := ServerFreshness(2000, 0)
+
+	pokestop := &Pokestop{
+		PokestopData: PokestopData{
+			Id:        "pokestop-1",
+			UpdatedMs: 1000,
+		},
+	}
+	if savePokestopRecordWithFreshness(context.Background(), db.DbDetails{}, pokestop, freshness) {
+		t.Fatal("expected debounced pokestop observation not to write")
+	}
+	if pokestop.UpdatedMs != 2000 {
+		t.Fatalf("expected debounced pokestop observation to advance watermark, got %d", pokestop.UpdatedMs)
+	}
+	if pokestop.IsDirty() {
+		t.Fatal("expected debounced pokestop watermark not to mark row dirty")
+	}
+
+	gym := &Gym{
+		GymData: GymData{
+			Id:        "gym-1",
+			UpdatedMs: 1000,
+		},
+	}
+	if saveGymRecordWithFreshness(context.Background(), db.DbDetails{}, gym, freshness) {
+		t.Fatal("expected debounced gym observation not to write")
+	}
+	if gym.UpdatedMs != 2000 {
+		t.Fatalf("expected debounced gym observation to advance watermark, got %d", gym.UpdatedMs)
+	}
+	if gym.IsDirty() {
+		t.Fatal("expected debounced gym watermark not to mark row dirty")
+	}
+
+	initStationBattleCache()
+	station := &Station{
+		StationData: StationData{
+			Id:        "station-1",
+			UpdatedMs: 1000,
+		},
+	}
+	if saveStationRecordWithFreshness(context.Background(), db.DbDetails{}, station, freshness) {
+		t.Fatal("expected debounced station observation not to write")
+	}
+	if station.UpdatedMs != 2000 {
+		t.Fatalf("expected debounced station observation to advance watermark, got %d", station.UpdatedMs)
+	}
+	if station.IsDirty() {
+		t.Fatal("expected debounced station watermark not to mark row dirty")
+	}
+}
+
 func TestFallbackFreshnessAppliesAndAdvancesExistingPokemonTimestamp(t *testing.T) {
 	pokemon := &Pokemon{
 		PokemonData: PokemonData{
